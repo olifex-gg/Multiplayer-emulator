@@ -196,6 +196,14 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   `settings.ini`, it logs in, downloads the shared town onto disk before the game's normal
   load path runs, and re-uploads after each in-game save. With no server configured every
   entry point is a no-op, so single-player is unchanged.
+- **Base-port fix: characters no longer snap upside down for a frame.** The game converts
+  float angles to `s16` everywhere and relies on out-of-range values wrapping modulo 2^16 as
+  the GameCube's `fctiwz`+`sth` does. On i686 GCC defaults to x87 math and compiles that
+  conversion to a 16-bit `fistp`, which turns any out-of-range value into `0x8000` = exactly
+  180 degrees, so joints flipped whenever an animation blend crossed the +-180 boundary
+  (walk start, talk start, the title demo). `pc/CMakeLists.txt` now builds everything with
+  `-msse2 -mfpmath=sse` (plus `-mstackrealign` for Win32 callbacks), which converts through a
+  32-bit `cvttss2si` and truncates like the console. Playtested: fixed. No game code changed.
 
 What step 1 does **not** yet do: show a second character (that is step 2, the puppet actor),
 apply incoming player-state or chat (counted but not yet rendered), or converge live town

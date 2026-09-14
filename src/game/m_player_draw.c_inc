@@ -4,20 +4,12 @@ static void Player_actor_draw_Before_head(ACTOR* actorx, GAME* game, cKF_Skeleto
     s_xyz* head_angle = &player->head_angle;
 
     if (head_angle->x != 0 || head_angle->y != 0 || head_angle->z != 0) {
-#ifdef TARGET_PC
-        s_xyz rot_before = *rot; /* branch reference: the joint before the head offset */
-#endif
         Matrix_push();
         Matrix_mult(&MtxF_clear, MTX_LOAD);
         Matrix_softcv3_mult(&ZeroVec, rot);
         Matrix_RotateX(head_angle->x, MTX_MULT);
         Matrix_RotateY(head_angle->y, MTX_MULT);
-#ifdef TARGET_PC
-        /* Same 180-degree branch fix as the body; keeps the head from snapping. */
-        Matrix_to_rotate2_new_keep_branch(get_Matrix_now(), rot, &rot_before, MTX_LOAD);
-#else
         Matrix_to_rotate2_new(get_Matrix_now(), rot, MTX_LOAD);
-#endif
         Matrix_pull();
     }
 }

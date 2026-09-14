@@ -285,23 +285,7 @@ static s16 cKF_KeyCalc(s16 start_idx, s16 n_frames, s16* data_src, f32 frame) {
                 f32 tension = delta_frame * (1.0f / 30.0f);
                 f32 calc = cKF_HermitCalc(t, tension, key_p[now].value, key_p[next].value, key_p[now].tangent,
                                           key_p[next].tangent);
-                int key;
-#ifdef TARGET_PC
-                /* Multiplayer fork fix: joint rotations are s16 angles. The
-                 * Hermite curve can overshoot beyond the s16 range at the
-                 * fractional frames the delta-time frame pacing samples (a
-                 * fixed 60 fps only ever lands on the authored keyframes). An
-                 * out-of-range value truncated to s16 wraps, which snaps the
-                 * joint ~180 degrees for one frame -- the "characters flip
-                 * upside down" glitch. Clamp to the s16 range so an overshoot
-                 * can no longer wrap. Only affects out-of-range samples. */
-                if (calc > 32767.0f || calc < -32768.0f) {
-                    calc = (calc > 32767.0f) ? 32767.0f : -32768.0f;
-                }
-                key = (int)(calc + (calc >= 0.0f ? 0.5f : -0.5f));
-#else
-                key = calc + 0.5; // Always round up
-#endif
+                int key = calc + 0.5; // Always round up
 
                 return key;
             } else {
@@ -1376,14 +1360,7 @@ extern void cKF_SkeletonInfo_R_AnimationMove_base(xyz_t* base, s16* sbase, xyz_t
         update_base = &keyframe->updated_base_model_rotation;
         Matrix_push();
         Matrix_rotateXYZ(keyframe->current_joint[1].x, keyframe->current_joint[1].y, keyframe->current_joint[1].z, MTX_LOAD);
-#ifdef TARGET_PC
-        /* Keep the decomposed angles on the same branch as the input joint so
-         * the base rotation cannot jump 180 degrees for a frame (the
-         * "characters flip upside down" bug). See sys_matrix.c. */
-        Matrix_to_rotate2_new_keep_branch(get_Matrix_now(), update_base, &keyframe->current_joint[1], MTX_LOAD);
-#else
         Matrix_to_rotate2_new(get_Matrix_now(), update_base, MTX_LOAD);
-#endif
         Matrix_pull();
         *sbase = angley + angle_c + (update_base->x - base_x);
     }
