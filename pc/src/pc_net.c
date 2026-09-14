@@ -43,8 +43,65 @@ static int          s_authority_id = -1;
 static int          s_self_id = -1;
 static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
 static uint32_t     s_town_version;
-static unsigned     s_puppet_rx;       /* counters for diagnostics until step 2/3 */
+static unsigned     s_puppet_rx;       /* diagnostic counters */
 static unsigned     s_chat_rx;
+
+/* --- Remote residents (step 2) -----------------------------------------
+ * One entry per resident slot (0..3). The game side samples the local
+ * player every frame via pc_net_send_player_state(), and reads the other
+ * residents via pc_net_get_remotes() to drive puppet actors. We keep the
+ * two most recent states per slot so the game can interpolate; recv_ms lets
+ * it despawn a puppet that has gone silent. This layer never touches game
+ * structs, so it is independent of the engine integration. */
+typedef struct {
+    int                  active;      /* a state has been received recently */
+    int                  client_id;
+    uint32_t             recv_ms;     /* enet_time of the latest state */
+    acnet_player_state_t cur;         /* most recent */
+    acnet_player_state_t prev;        /* one before, for interpolation */
+} remote_resident_t;
+
+static remote_resident_t s_remote[ACNET_MAX_PLAYERS];
+
+/* Pending chat, drained by the game once per frame. */
+typedef struct {
+    int  pending;
+    uint8_t slot;
+    uint8_t len;
+    char text[ACNET_CHAT_LEN + 1];
+} chat_inbox_t;
+static chat_inbox_t s_chat_inbox;
+
+/* A remote resident is considered gone if silent this long. */
+#define REMOTE_TIMEOUT_MS 3000
+
+static void remote_apply_state(const acnet_player_state_t* s) {
+    remote_resident_t* r;
+    if (s->slot >= ACNET_MAX_PLAYERS) return;
+    if ((int)s->slot == s_slot) return; /* never puppet ourselves */
+    r = &s_remote[s->slot];
+    /* Drop out-of-order packets (unreliable channel can reorder). */
+    if (r->active && (int16_t)(s->seq - r->cur.seq) <= 0) return;
+    r->prev = r->active ? r->cur : *s;
+    r->cur = *s;
+    r->client_id = s->client_id;
+    r->recv_ms = enet_time_get();
+    r->active = 1;
+}
+
+static void remote_expire(void) {
+    uint32_t now = enet_time_get();
+    int i;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        if (s_remote[i].active && now - s_remote[i].recv_ms > REMOTE_TIMEOUT_MS) {
+            s_remote[i].active = 0;
+        }
+    }
+}
+
+static void remote_drop_slot(int slot) {
+    if (slot >= 0 && slot < ACNET_MAX_PLAYERS) s_remote[slot].active = 0;
+}
 
 /* ------------------------------------------------------------- settings */
 
@@ -213,8 +270,15 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         return ACNET_MSG_AUTHORITY;
     }
     case ACNET_MSG_PEER_JOINED:
-    case ACNET_MSG_PEER_LEFT:
         return hdr->type;
+    case ACNET_MSG_PEER_LEFT: {
+        acnet_peer_t p;
+        if (payload_len == sizeof(p)) {
+            memcpy(&p, payload, sizeof(p));
+            remote_drop_slot(p.slot); /* remove their puppet immediately */
+        }
+        return hdr->type;
+    }
     default:
         return hdr->type;
     }
@@ -247,10 +311,25 @@ static int pump_until(uint8_t want, uint32_t timeout_ms) {
                 if (sizeof(hdr) + payload_len <= ev.packet->dataLength) {
                     blob_len = ev.packet->dataLength - sizeof(hdr) - payload_len;
                     if (hdr.type == ACNET_MSG_PLAYER_STATE) {
-                        s_puppet_rx++; /* step 2 will apply these */
+                        if (payload_len == sizeof(acnet_player_state_t)) {
+                            acnet_player_state_t st;
+                            memcpy(&st, payload, sizeof(st));
+                            remote_apply_state(&st);
+                            s_puppet_rx++;
+                        }
                         t = hdr.type;
                     } else if (hdr.type == ACNET_MSG_CHAT) {
-                        s_chat_rx++;   /* step 4 will surface these */
+                        if (payload_len == sizeof(acnet_chat_t)) {
+                            acnet_chat_t m;
+                            memcpy(&m, payload, sizeof(m));
+                            if (m.len > ACNET_CHAT_LEN) m.len = ACNET_CHAT_LEN;
+                            s_chat_inbox.slot = m.slot;
+                            s_chat_inbox.len = m.len;
+                            memcpy(s_chat_inbox.text, m.text, m.len);
+                            s_chat_inbox.text[m.len] = '\0';
+                            s_chat_inbox.pending = 1;
+                            s_chat_rx++;
+                        }
                         t = hdr.type;
                     } else {
                         t = handle_control(&hdr, payload, payload_len, payload + payload_len, blob_len);
@@ -332,7 +411,90 @@ int pc_net_init(void) {
 void pc_net_service(void) {
     if (!s_active) return;
     (void)pump_until(0, 0); /* non-blocking drain */
+    remote_expire();
 }
+
+/* --- Player-state stream (step 2) --------------------------------------- */
+
+void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned anim_index,
+                              float anim_frame, unsigned item, unsigned emote, unsigned area,
+                              unsigned flags) {
+    static uint16_t seq;
+    acnet_player_state_t s;
+    if (!s_active) return;
+    memset(&s, 0, sizeof(s));
+    s.client_id = (uint8_t)s_self_id;
+    s.slot = (uint8_t)s_slot;
+    s.seq = ++seq;
+    s.area = area;
+    s.x = x; s.y = y; s.z = z;
+    s.angle_y = (int16_t)angle_y;
+    s.anim_index = (uint16_t)anim_index;
+    s.anim_frame = anim_frame;
+    s.item = (uint16_t)item;
+    s.emote = (uint8_t)emote;
+    s.flags = (uint8_t)flags;
+    /* Unreliable, sequenced: newest state wins, drops are fine. */
+    send_msg(ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &s, sizeof(s), NULL, 0, 0);
+}
+
+int pc_net_local_slot(void) { return s_active ? s_slot : -1; }
+
+int pc_net_get_remote_fields(int slot, float* x, float* y, float* z, int* angle_y,
+                             unsigned* anim_index, float* anim_frame, unsigned* item,
+                             unsigned* emote, unsigned* area) {
+    const acnet_player_state_t* s;
+    if (!s_active || slot < 0 || slot >= ACNET_MAX_PLAYERS || !s_remote[slot].active) return 0;
+    s = &s_remote[slot].cur;
+    if (x) *x = s->x;
+    if (y) *y = s->y;
+    if (z) *z = s->z;
+    if (angle_y) *angle_y = s->angle_y;
+    if (anim_index) *anim_index = s->anim_index;
+    if (anim_frame) *anim_frame = s->anim_frame;
+    if (item) *item = s->item;
+    if (emote) *emote = s->emote;
+    if (area) *area = s->area;
+    return 1;
+}
+
+int pc_net_remote_count(void) {
+    int i, n = 0;
+    if (!s_active) return 0;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) if (s_remote[i].active) n++;
+    return n;
+}
+
+/* --- Chat (step 4) ------------------------------------------------------- */
+
+void pc_net_send_chat(const char* text) {
+    acnet_chat_t m;
+    size_t n;
+    if (!s_active || !text) return;
+    n = strlen(text);
+    if (n > ACNET_CHAT_LEN) n = ACNET_CHAT_LEN;
+    memset(&m, 0, sizeof(m));
+    m.slot = (uint8_t)s_slot;
+    m.len = (uint8_t)n;
+    memcpy(m.text, text, n);
+    send_msg(ACNET_CH_CHAT, ACNET_MSG_CHAT, &m, sizeof(m), NULL, 0, 1);
+}
+
+int pc_net_poll_chat(int* out_slot, char* out_text, int out_size) {
+    if (!s_active || !s_chat_inbox.pending) return 0;
+    if (out_slot) *out_slot = s_chat_inbox.slot;
+    if (out_text && out_size > 0) {
+        int n = s_chat_inbox.len < (out_size - 1) ? s_chat_inbox.len : (out_size - 1);
+        memcpy(out_text, s_chat_inbox.text, n);
+        out_text[n] = '\0';
+    }
+    s_chat_inbox.pending = 0;
+    return 1;
+}
+
+/* --- Clock (step 4) ------------------------------------------------------ */
+
+long long pc_net_server_clock_skew_ms(void) { return s_active ? (long long)s_clock_skew_ms : 0; }
 
 static uint8_t* read_town_file(size_t* out_len) {
     FILE* fp = fopen(NET_GCI_PATH, "rb");
