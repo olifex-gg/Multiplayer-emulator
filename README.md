@@ -133,6 +133,59 @@ checksum and bounds-check the passport, reject impossible positions and item ids
 apply raw memory writes. The visitor never has write access to the host's town except
 through validated events. This is the answer to the upstream FAQ's concern.
 
+### Hosting
+
+Three tiers, in the order we would build them.
+
+1. **Player hosted (v1).** One player's PC runs the town. Opening the gate in game starts
+   listening on a UDP port. Friends connect by address or room code. The host needs a
+   forwarded port, or everyone can use a mesh VPN like Tailscale as a zero-code stopgap.
+   Bandwidth is tiny: the town save is sent once at join, then a few KB per second per
+   player.
+2. **Relay server.** A small stateless program on a cheap VPS that hands out room codes and
+   forwards packets between host and visitors. It never runs the game, so it costs almost
+   nothing and removes port forwarding. This is how most emulator netplay communities work.
+3. **Dedicated always-on town (v2 or later).** A headless build of the game running the
+   town on a VPS around the clock, so nobody has to be "the host". Needs a null GX
+   backend, no audio, and a hidden dummy local player because the engine assumes one
+   exists. Real work, so it comes after peer hosting is solid.
+
+### Saves
+
+Each player keeps their own save. The original game's travel design already does this,
+and the port implements it in `pc/src/pc_m_card.c`, so we inherit it rather than invent
+it.
+
+- Every player has a home town save on their own PC, in Dolphin-compatible GCI format,
+  with up to four resident characters.
+- **Leaving.** The game builds a passport from your character: the whole `Private_c`
+  block, about 10 KB, holding name, appearance, inventory, bells, catalog, and flags. It
+  marks you as away in your home save, writes that to disk, then loads the other town.
+- **Visiting.** You play as the foreigner slot, with the passport as your live character
+  data. Everything you gain or spend accumulates in it.
+- **Returning.** The passport is refreshed from your live data, the visited town is saved
+  on the host, your home town is reloaded, and the passport is merged back into your home
+  slot and written to disk. Items you received come home with you.
+- **Host side.** The host's town save is the authoritative town. Everything visitors do
+  there, dropped items, shaken trees, dug holes, mail, is simply part of the host saving
+  normally. The host's other residents are untouched.
+
+Two things we must add on top of the inherited flow:
+
+- **Disconnect safety.** The original punishes quitting mid-visit: next load sees the
+  away flag, gives you the gyroid face, and wipes pockets and wallet. A dropped
+  connection must not do that. The visitor client checkpoints its passport to disk during
+  the visit, the same role the passport file on memory card B played on GameCube, and
+  merges it home on next launch.
+- **Clock handling.** Departure and return stamp a hardware time used to detect clock
+  tampering. With separate PCs the host clock is the world clock during a visit, and the
+  return check has to use the visitor's own clock so it is not flagged.
+
+**Optional later mode: one shared town.** Instead of visiting, all players are residents of
+the host's town, each with a house, using the four resident slots the game already has.
+Character data then lives in the host's save, and you can only play while the host or a
+dedicated server is up. Pairs naturally with the always-on town in tier 3.
+
 ### Out of scope
 
 Dolphin support, the N64 version, e-Reader and GBA link, and any distribution of game data.
