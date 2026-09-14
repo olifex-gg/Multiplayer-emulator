@@ -68,6 +68,8 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/glad/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/fixnes
+    # Shared client/server wire protocol (multiplayer fork)
+    ${DECOMP_ROOT}/net
     # .inc assets are loaded at runtime from disc image (no build/GAFE01_00 needed)
 )
 
@@ -136,6 +138,33 @@ add_library(glad STATIC
 target_include_directories(glad PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/glad/include
 )
+
+# =============================================================================
+# ENet — vendored reliable UDP library (MIT License, by Lee Salzman)
+# Used by the multiplayer client (pc_net.c). unix.c / win32.c are each fully
+# guarded on _WIN32 so both compile on every platform.
+# =============================================================================
+set(ENET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/enet)
+add_library(enet STATIC
+    ${ENET_DIR}/callbacks.c
+    ${ENET_DIR}/compress.c
+    ${ENET_DIR}/host.c
+    ${ENET_DIR}/list.c
+    ${ENET_DIR}/packet.c
+    ${ENET_DIR}/peer.c
+    ${ENET_DIR}/protocol.c
+    ${ENET_DIR}/unix.c
+    ${ENET_DIR}/win32.c
+)
+target_include_directories(enet PUBLIC ${ENET_DIR}/include)
+target_compile_options(enet PRIVATE -w)
+if(WIN32)
+    target_link_libraries(enet PUBLIC ws2_32 winmm)
+else()
+    target_compile_definitions(enet PRIVATE
+        HAS_SOCKLEN_T=1 HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1
+        HAS_GETNAMEINFO=1 HAS_INET_PTON=1 HAS_INET_NTOP=1 HAS_MSGHDR_FLAGS=1)
+endif()
 
 # =============================================================================
 # Collect game source files
@@ -418,10 +447,10 @@ add_executable(ac_pc
 
 # Link SDL2 without SDL2main (we define SDL_MAIN_HANDLED)
 if(TARGET SDL2::SDL2)
-    target_link_libraries(ac_pc glad SDL2::SDL2)
+    target_link_libraries(ac_pc glad enet SDL2::SDL2)
 else()
     list(FILTER SDL2_LIBRARIES EXCLUDE REGEX "SDL2main")
-    target_link_libraries(ac_pc glad ${SDL2_LIBRARIES})
+    target_link_libraries(ac_pc glad enet ${SDL2_LIBRARIES})
 endif()
 
 if(WIN32)
