@@ -1,0 +1,256 @@
+/* town.c - town vault implementation. See town.h. */
+#include "town.h"
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define TOWN_FILE      "town.gci"
+#define TOWN_TMP       "town.gci.tmp"
+#define RESIDENTS_FILE "residents.txt"
+#define VERSION_FILE   "town.version"
+#define TOWN_BACKUPS   3
+
+static void path_join(char* out, size_t out_size, const char* dir, const char* file) {
+    snprintf(out, out_size, "%s/%s", dir, file);
+}
+
+static int mkdir_p(const char* path) {
+    char tmp[TOWN_DIR_MAX];
+    size_t len = strlen(path);
+    size_t i;
+    if (len == 0 || len >= sizeof(tmp)) return -1;
+    memcpy(tmp, path, len + 1);
+    for (i = 1; i < len; i++) {
+        if (tmp[i] == '/') {
+            tmp[i] = '\0';
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+            tmp[i] = '/';
+        }
+    }
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+    return 0;
+}
+
+static int read_file(const char* path, uint8_t* buf, size_t size) {
+    FILE* fp = fopen(path, "rb");
+    size_t got;
+    if (!fp) return -1;
+    got = fread(buf, 1, size, fp);
+    fclose(fp);
+    return got == size ? 0 : -1;
+}
+
+static int write_file_atomic(const char* dir, const char* final_name, const char* tmp_name,
+                             const uint8_t* buf, size_t size) {
+    char tmp_path[TOWN_DIR_MAX + 64];
+    char final_path[TOWN_DIR_MAX + 64];
+    FILE* fp;
+    path_join(tmp_path, sizeof(tmp_path), dir, tmp_name);
+    path_join(final_path, sizeof(final_path), dir, final_name);
+    fp = fopen(tmp_path, "wb");
+    if (!fp) return -1;
+    if (fwrite(buf, 1, size, fp) != size) {
+        fclose(fp);
+        remove(tmp_path);
+        return -1;
+    }
+    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+        fclose(fp);
+        remove(tmp_path);
+        return -1;
+    }
+    fclose(fp);
+    if (rename(tmp_path, final_path) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+    return 0;
+}
+
+static void rotate_backups(const char* dir) {
+    char from[TOWN_DIR_MAX + 64];
+    char to[TOWN_DIR_MAX + 64];
+    int b;
+    for (b = TOWN_BACKUPS; b >= 1; b--) {
+        if (b == 1) {
+            path_join(from, sizeof(from), dir, TOWN_FILE);
+        } else {
+            snprintf(from, sizeof(from), "%s/%s.bak%d", dir, TOWN_FILE, b - 1);
+        }
+        snprintf(to, sizeof(to), "%s/%s.bak%d", dir, TOWN_FILE, b);
+        rename(from, to); /* missing files are fine */
+    }
+}
+
+uint16_t town_checksum_be(const uint8_t* data, size_t size) {
+    uint32_t sum = 0;
+    size_t i;
+    for (i = 0; i + 1 < size; i += 2) {
+        sum += (uint16_t)(((uint16_t)data[i] << 8) | data[i + 1]);
+    }
+    return (uint16_t)((~(sum & 0xFFFFu) + 1u) & 0xFFFFu);
+}
+
+void town_fix_payload(uint8_t* payload) {
+    uint8_t* main_save = payload + ACNET_SAVE_MAIN_OFFSET;
+    uint8_t* chk = main_save + ACNET_SAVE_CHECKSUM_OFFSET;
+    uint16_t sum;
+    chk[0] = 0;
+    chk[1] = 0;
+    sum = town_checksum_be(main_save, ACNET_SAVE_T_SIZE);
+    chk[0] = (uint8_t)(sum >> 8);
+    chk[1] = (uint8_t)(sum & 0xFF);
+    memcpy(payload + ACNET_SAVE_BACK_OFFSET, main_save, ACNET_SAVE_ALIGNED_SIZE);
+}
+
+static int load_residents(town_t* t) {
+    char path[TOWN_DIR_MAX + 64];
+    FILE* fp;
+    char line[256];
+    path_join(path, sizeof(path), t->dir, RESIDENTS_FILE);
+    fp = fopen(path, "r");
+    if (!fp) return 0; /* none yet */
+    while (fgets(line, sizeof(line), fp)) {
+        int slot, uploaded;
+        char name[ACNET_NAME_LEN + 1];
+        if (sscanf(line, "%d %d %16s", &slot, &uploaded, name) == 3 &&
+            slot >= 0 && slot < ACNET_MAX_PLAYERS) {
+            snprintf(t->slot_owner[slot], sizeof(t->slot_owner[slot]), "%s", name);
+            t->slot_uploaded[slot] = uploaded ? 1 : 0;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int save_residents(town_t* t) {
+    char buf[ACNET_MAX_PLAYERS * 64];
+    size_t used = 0;
+    int i;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        if (t->slot_owner[i][0]) {
+            used += (size_t)snprintf(buf + used, sizeof(buf) - used, "%d %d %s\n", i,
+                                     t->slot_uploaded[i], t->slot_owner[i]);
+        }
+    }
+    return write_file_atomic(t->dir, RESIDENTS_FILE, RESIDENTS_FILE ".tmp", (const uint8_t*)buf, used);
+}
+
+static int save_version(town_t* t) {
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%u\n", t->version);
+    return write_file_atomic(t->dir, VERSION_FILE, VERSION_FILE ".tmp", (const uint8_t*)buf, (size_t)n);
+}
+
+int town_open(town_t* t, const char* data_root, const char* invite) {
+    char path[TOWN_DIR_MAX + 64];
+    struct stat st;
+    memset(t, 0, sizeof(*t));
+    snprintf(t->invite, sizeof(t->invite), "%s", invite);
+    snprintf(t->dir, sizeof(t->dir), "%s/towns/%s", data_root, invite);
+    if (mkdir_p(t->dir) != 0) return -1;
+
+    path_join(path, sizeof(path), t->dir, TOWN_FILE);
+    if (stat(path, &st) == 0) {
+        if (st.st_size != (off_t)ACNET_TOWN_SIZE) {
+            fprintf(stderr, "[town %s] %s has size %ld, expected %u; ignoring\n", invite, path,
+                    (long)st.st_size, (unsigned)ACNET_TOWN_SIZE);
+        } else {
+            t->data = (uint8_t*)malloc(ACNET_TOWN_SIZE);
+            if (!t->data) return -1;
+            if (read_file(path, t->data, ACNET_TOWN_SIZE) != 0 ||
+                !town_validate_blob(t->data, ACNET_TOWN_SIZE)) {
+                fprintf(stderr, "[town %s] failed to read %s\n", invite, path);
+                free(t->data);
+                t->data = NULL;
+            }
+        }
+    }
+    path_join(path, sizeof(path), t->dir, VERSION_FILE);
+    {
+        FILE* fp = fopen(path, "r");
+        if (fp) {
+            unsigned v = 0;
+            if (fscanf(fp, "%u", &v) == 1) t->version = v;
+            fclose(fp);
+        }
+    }
+    load_residents(t);
+    return 0;
+}
+
+void town_close(town_t* t) {
+    free(t->data);
+    t->data = NULL;
+}
+
+int town_assign_slot(town_t* t, const char* name, int want_slot) {
+    int i;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        if (strcmp(t->slot_owner[i], name) == 0) return i;
+    }
+    if (want_slot >= 0 && want_slot < ACNET_MAX_PLAYERS && t->slot_owner[want_slot][0] == '\0') {
+        i = want_slot;
+    } else if (want_slot == ACNET_SLOT_ANY) {
+        for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+            if (t->slot_owner[i][0] == '\0') break;
+        }
+        if (i == ACNET_MAX_PLAYERS) return -1;
+    } else {
+        return -1;
+    }
+    snprintf(t->slot_owner[i], sizeof(t->slot_owner[i]), "%s", name);
+    t->slot_uploaded[i] = 0;
+    save_residents(t);
+    return i;
+}
+
+int town_validate_blob(const uint8_t* blob, size_t len) {
+    if (len != ACNET_TOWN_SIZE) return 0;
+    /* CARDDir.gameName: "GAF" + region letter (GAFE for USA) */
+    if (blob[0] != 'G' || blob[1] != 'A' || blob[2] != 'F') return 0;
+    return 1;
+}
+
+uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob) {
+    uint8_t* next;
+    int j;
+    if (uploader_slot < 0 || uploader_slot >= ACNET_MAX_PLAYERS) return 0;
+    if (!town_validate_blob(blob, ACNET_TOWN_SIZE)) return 0;
+
+    next = (uint8_t*)malloc(ACNET_TOWN_SIZE);
+    if (!next) return 0;
+    memcpy(next, blob, ACNET_TOWN_SIZE);
+
+    if (t->data) {
+        /* Protect every other resident's own blocks: their client is the
+         * only authority for those bytes. Slots nobody has uploaded for
+         * yet are taken from the uploader (that is how a new resident is
+         * created in a town someone else founded). */
+        for (j = 0; j < ACNET_MAX_PLAYERS; j++) {
+            if (j == uploader_slot) continue;
+            if (t->slot_owner[j][0] == '\0' || !t->slot_uploaded[j]) continue;
+            memcpy(next + ACNET_PRIVATE_OFFSET(j), t->data + ACNET_PRIVATE_OFFSET(j), ACNET_PRIVATE_SIZE);
+            memcpy(next + ACNET_HOME_OFFSET(j), t->data + ACNET_HOME_OFFSET(j), ACNET_HOME_SIZE);
+        }
+    }
+    town_fix_payload(next + ACNET_GCI_HEADER_SIZE);
+
+    rotate_backups(t->dir);
+    if (write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, next, ACNET_TOWN_SIZE) != 0) {
+        free(next);
+        return 0;
+    }
+    free(t->data);
+    t->data = next;
+    t->version++;
+    t->slot_uploaded[uploader_slot] = 1;
+    save_residents(t);
+    save_version(t);
+    return t->version;
+}

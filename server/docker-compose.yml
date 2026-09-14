@@ -1,0 +1,19 @@
+# Run from the repository root:  docker compose -f server/docker-compose.yml up -d
+# The town, invite codes, and backups live in the named volume "acnet-data".
+# Print the invite code after first start:  docker compose -f server/docker-compose.yml logs
+services:
+  town:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: acnet-server
+    restart: unless-stopped
+    ports:
+      - "7777:7777/udp"
+    volumes:
+      - acnet-data:/data
+    environment:
+      ACNET_PORT: "7777"
+      ACNET_DATA: /data
+volumes:
+  acnet-data:
