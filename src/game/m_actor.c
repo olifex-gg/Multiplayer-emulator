@@ -515,6 +515,32 @@ extern void Actor_info_call_actor(GAME_PLAY* play, Actor_info* actor_info) {
     play->game.doing_point_specific = 163;
 }
 
+#ifdef TARGET_PC
+/* --- Flip detective (multiplayer fork, temporary diagnostic) ------------
+ * Characters flip upside down for a frame during animations. We think the
+ * whole-body orientation (shape rotation pitch/roll) briefly inverts. This
+ * logs any drawn actor whose pitch (rotation.x) or roll (rotation.z) is more
+ * than 90 degrees from upright, which is the flip. Budget-limited so the
+ * console does not flood. Search the log for "[flipwatch]". */
+static void pc_flipwatch(ACTOR* actor, GAME_PLAY* play, int part) {
+    static int budget = 400;
+    int rx = (s16)actor->shape_info.rotation.x;
+    int rz = (s16)actor->shape_info.rotation.z;
+    int wx = (s16)actor->world.angle.x;
+    int wz = (s16)actor->world.angle.z;
+    /* 0x4000 = 90 degrees in the game's s16 angle units. */
+    if (rx > 0x4000 || rx < -0x4000 || rz > 0x4000 || rz < -0x4000 ||
+        wx > 0x4000 || wx < -0x4000 || wz > 0x4000 || wz < -0x4000) {
+        if (budget > 0) {
+            budget--;
+            OSReport("[flipwatch] actor id=%d part=%d shape_rot=(%d,%d,%d) world_ang=(%d,%d,%d) dt=%.2f\n",
+                     actor->id, part, rx, (s16)actor->shape_info.rotation.y, rz, wx,
+                     (s16)actor->world.angle.y, wz, (double)play->game.graph->dt_num_60fps_frames);
+        }
+    }
+}
+#endif
+
 extern void Actor_info_draw_actor(GAME_PLAY* play, Actor_info* actor_info) {
     Actor_list* list;
     ACTOR* actor;
@@ -526,6 +552,9 @@ extern void Actor_info_draw_actor(GAME_PLAY* play, Actor_info* actor_info) {
         int do_not_draw;
 
         for (actor = list->actor; actor != NULL; actor = actor->next_actor) {
+#ifdef TARGET_PC
+            pc_flipwatch(actor, play, i);
+#endif
             /* Apply projection matrix to actor position */
             Skin_Matrix_PrjMulVector(&play->projection_matrix, &actor->world.position, &actor->camera_position,
                                      &actor->camera_w);

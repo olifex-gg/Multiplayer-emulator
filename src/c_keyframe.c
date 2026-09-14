@@ -295,10 +295,18 @@ static s16 cKF_KeyCalc(s16 start_idx, s16 n_frames, s16* data_src, f32 frame) {
                  * joint ~180 degrees for one frame -- the "characters flip
                  * upside down" glitch. Clamp to the s16 range so an overshoot
                  * can no longer wrap. Only affects out-of-range samples. */
-                if (calc > 32767.0f) {
-                    calc = 32767.0f;
-                } else if (calc < -32768.0f) {
-                    calc = -32768.0f;
+                if (calc > 32767.0f || calc < -32768.0f) {
+                    /* Detective log (temporary): report how far the curve
+                     * overshoots, to confirm whether the skeleton is still a
+                     * flip source after the clamp. Budget-limited. */
+                    static int kf_budget = 200;
+                    if (kf_budget > 0) {
+                        kf_budget--;
+                        OSReport("[flipwatch-kf] overshoot calc=%.1f (n0=%d n1=%d t0=%d t1=%d)\n",
+                                 (double)calc, key_p[now].value, key_p[next].value, key_p[now].tangent,
+                                 key_p[next].tangent);
+                    }
+                    calc = (calc > 32767.0f) ? 32767.0f : -32768.0f;
                 }
                 key = (int)(calc + (calc >= 0.0f ? 0.5f : -0.5f));
 #else
