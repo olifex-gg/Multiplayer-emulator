@@ -16,8 +16,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/time.h>
+#endif
 
 #include "protocol.h"
 #include "town.h"
@@ -60,7 +64,11 @@ static void logf_(const char* fmt, ...) {
     time_t now = time(NULL);
     struct tm tmv;
     va_list ap;
+#ifdef _WIN32
+    localtime_s(&tmv, &now); /* note: Windows argument order is (tm*, time_t*) */
+#else
     localtime_r(&now, &tmv);
+#endif
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tmv);
     printf("%s ", ts);
     va_start(ap, fmt);
@@ -71,9 +79,19 @@ static void logf_(const char* fmt, ...) {
 }
 
 static int64_t unix_ms(void) {
+#ifdef _WIN32
+    /* FILETIME is 100ns ticks since 1601-01-01; shift epoch to 1970. */
+    FILETIME ft;
+    ULARGE_INTEGER u;
+    GetSystemTimeAsFileTime(&ft);
+    u.LowPart = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    return (int64_t)((u.QuadPart - 116444736000000000ULL) / 10000ULL);
+#else
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+#endif
 }
 
 /* --------------------------------------------------------------- invites */
@@ -509,6 +527,10 @@ int main(int argc, char** argv) {
     ENetHost* host;
     int i;
 
+    /* Seed rand(): the invite-code fallback uses it when /dev/urandom is
+     * absent (e.g. on Windows). */
+    srand((unsigned)(time(NULL) ^ (uintptr_t)&host));
+
     if (getenv("ACNET_PORT")) port = atoi(getenv("ACNET_PORT"));
     if (getenv("ACNET_DATA")) snprintf(g_data_root, sizeof(g_data_root), "%s", getenv("ACNET_DATA"));
     for (i = 1; i < argc; i++) {
@@ -553,7 +575,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     signal(SIGINT, on_signal);
+#ifdef SIGTERM
     signal(SIGTERM, on_signal);
+#endif
     logf_("town server listening on UDP %d, data in %s", port, g_data_root);
 
     while (!g_stop) {

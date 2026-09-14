@@ -7,7 +7,23 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <windows.h> /* MoveFileExA */
+#include <direct.h>  /* _mkdir */
+#include <io.h>      /* _commit, _fileno */
+#define acnet_mkdir(path) _mkdir(path)
+#define acnet_fsync(fp)   _commit(_fileno(fp))
+/* POSIX rename() replaces an existing destination atomically; the Windows CRT
+ * rename() fails if the destination exists, so use MoveFileEx with replace. */
+static int acnet_replace(const char* from, const char* to) {
+    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
+}
+#else
 #include <unistd.h>
+#define acnet_mkdir(path) mkdir((path), 0755)
+#define acnet_fsync(fp)   fsync(fileno(fp))
+static int acnet_replace(const char* from, const char* to) { return rename(from, to); }
+#endif
 
 #define TOWN_FILE      "town.gci"
 #define TOWN_TMP       "town.gci.tmp"
@@ -28,11 +44,11 @@ static int mkdir_p(const char* path) {
     for (i = 1; i < len; i++) {
         if (tmp[i] == '/') {
             tmp[i] = '\0';
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+            if (acnet_mkdir(tmp) != 0 && errno != EEXIST) return -1;
             tmp[i] = '/';
         }
     }
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+    if (acnet_mkdir(tmp) != 0 && errno != EEXIST) return -1;
     return 0;
 }
 
@@ -59,13 +75,13 @@ static int write_file_atomic(const char* dir, const char* final_name, const char
         remove(tmp_path);
         return -1;
     }
-    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+    if (fflush(fp) != 0 || acnet_fsync(fp) != 0) {
         fclose(fp);
         remove(tmp_path);
         return -1;
     }
     fclose(fp);
-    if (rename(tmp_path, final_path) != 0) {
+    if (acnet_replace(tmp_path, final_path) != 0) {
         remove(tmp_path);
         return -1;
     }
@@ -83,7 +99,7 @@ static void rotate_backups(const char* dir) {
             snprintf(from, sizeof(from), "%s/%s.bak%d", dir, TOWN_FILE, b - 1);
         }
         snprintf(to, sizeof(to), "%s/%s.bak%d", dir, TOWN_FILE, b);
-        rename(from, to); /* missing files are fine */
+        acnet_replace(from, to); /* missing files are fine */
     }
 }
 
