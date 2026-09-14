@@ -84,107 +84,100 @@ decompiled engine. It is a useful sketch of the client/relay shape, nothing more
   So this is a fork, with foundation fixes offered upstream. The security point is valid and
   is designed for below.
 
-## Plan
+## Chosen route: one shared town, hosted on a server
 
-### Step 0. Set up the fork
+Decision (Sept 2026): all players are **residents of one town**, using the four resident
+slots the game already has, and the town lives on a **server** rather than on any player's
+PC. The earlier visit-and-passport model stays documented at the bottom as a possible
+later add-on for guests, but it is not the build target.
 
-Import ACGC-PC-Port into this repository as the base (add it as `upstream`, merge its
-history) so upstream fixes can be pulled with a plain merge. Vendor ENet under `pc/lib/`
-next to `glad` and `fixnes`, matching how the port already vendors libraries. Reproduce the
-MSYS2 MINGW32 build and confirm a slot-B visit works locally with two GCI files.
+### Why this is not more work than the visit model
 
-### Step 1. Networked memory card B
+- The game already has everything the resident model needs: four `private_data` slots and
+  four houses in one save, and a player select screen that loads any resident with
+  `mSDI_INIT_MODE_FROM`. No passport or travel machinery is used at all.
+- The server does **not** run the game. The engine only simulates the acres around a
+  player, so a headless copy of the game on the server could not simulate the whole town
+  anyway, and it is not needed: the game already computes everything that happened while
+  nobody was around when a save is loaded (`mSDI_StartDataInit` renews time, growth,
+  season, mail). A town that nobody is in does not need to tick.
+- The server is therefore a small ordinary program: a save vault, a lobby, a packet relay,
+  a sequencer for conflicting actions, and the town clock. A few thousand lines in Go or
+  Rust, one binary, one cheap VPS.
 
-Replace the "second GCI in `save/`" source with a network source behind the same functions
-in `pc_m_card.c`. Host mode serves its town save on join. Visitor mode receives it into the
-card-B buffer, so the existing station code sees a valid travel destination and the visitor
-arrives by train exactly as today. Passport goes visitor to host. Return trip sends the
-visitor's updated passport home and the host's town save-back stays local. Milestone: two
-PCs, one visitor riding into the host's town over the network, with no second visible
-character yet.
+### What a town is on disk
 
-### Step 2. Puppet actor
+One contiguous `Save_t` block of 0x72000 bytes (the GCI payload) plus three side blocks the
+GameCube kept in ARAM: mail, original designs, diary. Inside `Save_t` the four resident
+blocks sit at fixed offsets (0x20 plus 0x2440 per slot) and houses at 0x9CE8, so the server
+can splice per-resident data by offset without understanding the game.
 
-New actor profile, `mAc_PROFILE_PUPPET`, registered in the NPC part so nothing that looks
-up the player finds it. Its struct embeds `PLAYER_ACTOR` so `Player_actor_draw_Normal` and
-the animation code work unchanged. Give the model, face, cloth, and palette lookups in
-`m_player_lib.c` a `Private_c*` parameter with the old global as the default, and pass the
-remote player's passport for puppets. Each client sends its own player state at 20 to 30 Hz:
-position, facing, animation index and frame, held item, emote. Interpolate on receive.
-Milestone: host and visitor see each other walk around.
+### Authority model
 
-### Step 3. Host-authoritative world events
+- **Your resident block is yours.** Each client is authoritative for its own
+  `private_data` slot and house. The server always splices the latest copy from that
+  client into the stored town.
+- **Land data converges two ways.** Player actions that change the town (pick up, drop,
+  shake, dig, plant, bury, mail, gate, furniture) are events the server orders and
+  broadcasts, so everyone sees them immediately. Everything else (villager walks, weeds,
+  day change, shop stock) is covered by a periodic delta of the land block from the
+  **world authority**, the oldest connected client, which the server elects and migrates
+  when that client leaves.
+- **Actors are owned per acre.** Whichever client has an acre loaded owns the villagers in
+  it and streams their positions. Ties go to the lowest client id. Other clients only
+  display them. This is the sm64ex-coop ownership pattern.
+- **Server clock is town clock.** Every client offsets its in-game clock to the server's,
+  so shop hours and villager schedules agree. The port already has a time override.
+- **Join consistency.** The first client to join loads the vault copy and runs the
+  normal load-time catch-up. Later joiners receive a live snapshot from the world
+  authority and skip catch-up, so two clients never invent two different versions of the
+  same missed week.
+- **Persistence.** The world authority uploads a delta every few seconds and a full
+  snapshot on every in-game save and on leave. A crash loses at most a few seconds.
 
-Anything that changes the town is an event validated by the host: pick up, drop, tree
-shake, rock hit, dig, fill, bells, furniture, gate. Visitors apply the host's decision.
-Villager positions, schedules, and dialogue locks stream host to visitors. Host clock is the
-world clock. Puppets are only drawn in the same room or acre.
+### Limits
 
-### Step 4. Chat, then three and four players
+- Four players per town. That is the engine's resident limit. More than four means a
+  second town on the same server, or guest visitors via the passport model later.
+- Trust is at the friend-group level. The server bounds-checks and rate-limits, and a
+  client can only ever write its own resident block directly, but deep rule validation
+  would need the game logic and is out of scope. Invite codes, not public listing.
 
-Chat reuses the game's keyboard text entry, sanitized to the game's character set on
-receive. Extend puppet slots and passports to four players. Add an optional relay server
-for players behind NAT.
+### Plan
 
-### Security design (why RAM injection was the wrong tool)
+**Step 0. Set up the fork.** Import ACGC-PC-Port into this repository with upstream
+tracking, vendor ENet under `pc/lib/`, reproduce the MSYS2 MINGW32 build. Start the server
+project alongside it. Windows-only code in the port is about fifteen lines across six
+files, so a Linux client build is plausible later.
 
-Because all sync goes through explicit, typed messages, the host validates every byte:
-checksum and bounds-check the passport, reject impossible positions and item ids, never
-apply raw memory writes. The visitor never has write access to the host's town except
-through validated events. This is the answer to the upstream FAQ's concern.
+**Step 1. Server vault and resident login.** The client gets a "connect to server" path
+next to its local save path: on login it downloads the town snapshot into the same buffers
+the port fills from a GCI file, then the existing player select runs with the server
+enforcing one human per resident slot. Saving uploads. Milestone: two people load the same
+town from the server as two different residents. No sync yet, last save wins.
 
-### Hosting
+**Step 2. Puppet actor.** Unchanged from before: a new actor profile embedding
+`PLAYER_ACTOR`, registered outside the player slot, with the model, face, cloth, and
+palette lookups in `m_player_lib.c` taking a `Private_c*`. Puppets are built from the other
+residents' blocks, which every client already has in its own copy of the save. Milestone:
+residents see each other walk around.
 
-Three tiers, in the order we would build them.
+**Step 3. Convergence.** Player action events, acre ownership for villagers, periodic land
+delta from the world authority, per-resident splicing on the server, join consistency,
+authority migration. This is the hardest step of the project in any route and the
+dedicated server does not make it harder. Milestone: four residents in one coherent town
+for an evening with no visible drift.
 
-1. **Player hosted (v1).** One player's PC runs the town. Opening the gate in game starts
-   listening on a UDP port. Friends connect by address or room code. The host needs a
-   forwarded port, or everyone can use a mesh VPN like Tailscale as a zero-code stopgap.
-   Bandwidth is tiny: the town save is sent once at join, then a few KB per second per
-   player.
-2. **Relay server.** A small stateless program on a cheap VPS that hands out room codes and
-   forwards packets between host and visitors. It never runs the game, so it costs almost
-   nothing and removes port forwarding. This is how most emulator netplay communities work.
-3. **Dedicated always-on town (v2 or later).** A headless build of the game running the
-   town on a VPS around the clock, so nobody has to be "the host". Needs a null GX
-   backend, no audio, and a hidden dummy local player because the engine assumes one
-   exists. Real work, so it comes after peer hosting is solid.
+**Step 4. Chat, clock, hardening.** Chat through the game's text entry, server clock
+offset, reconnect handling, snapshot cadence tuning, a `docker compose` for the server.
 
-### Saves
+### Not doing (and why)
 
-Each player keeps their own save. The original game's travel design already does this,
-and the port implements it in `pc/src/pc_m_card.c`, so we inherit it rather than invent
-it.
-
-- Every player has a home town save on their own PC, in Dolphin-compatible GCI format,
-  with up to four resident characters.
-- **Leaving.** The game builds a passport from your character: the whole `Private_c`
-  block, about 10 KB, holding name, appearance, inventory, bells, catalog, and flags. It
-  marks you as away in your home save, writes that to disk, then loads the other town.
-- **Visiting.** You play as the foreigner slot, with the passport as your live character
-  data. Everything you gain or spend accumulates in it.
-- **Returning.** The passport is refreshed from your live data, the visited town is saved
-  on the host, your home town is reloaded, and the passport is merged back into your home
-  slot and written to disk. Items you received come home with you.
-- **Host side.** The host's town save is the authoritative town. Everything visitors do
-  there, dropped items, shaken trees, dug holes, mail, is simply part of the host saving
-  normally. The host's other residents are untouched.
-
-Two things we must add on top of the inherited flow:
-
-- **Disconnect safety.** The original punishes quitting mid-visit: next load sees the
-  away flag, gives you the gyroid face, and wipes pockets and wallet. A dropped
-  connection must not do that. The visitor client checkpoints its passport to disk during
-  the visit, the same role the passport file on memory card B played on GameCube, and
-  merges it home on next launch.
-- **Clock handling.** Departure and return stamp a hardware time used to detect clock
-  tampering. With separate PCs the host clock is the world clock during a visit, and the
-  return check has to use the visitor's own clock so it is not flagged.
-
-**Optional later mode: one shared town.** Instead of visiting, all players are residents of
-the host's town, each with a house, using the four resident slots the game already has.
-Character data then lives in the host's save, and you can only play while the host or a
-dedicated server is up. Pairs naturally with the always-on town in tier 3.
+- **Running the game headless on the server.** Would need a Linux 32-bit build, a null GX
+  backend, a hidden dummy player, and engine changes to keep every acre loaded at once.
+  It buys nothing the load-time catch-up does not already give us.
+- **Visit-and-passport mode.** The port's `pc_m_card.c` already implements slot-B travel,
+  so it remains a cheap later add-on for guests from other towns. Not on the path.
 
 ### Out of scope
 
