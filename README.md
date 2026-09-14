@@ -58,50 +58,84 @@ NPC slots". Treat it as **unverified**. It has no users, no screenshots or video
 memory map describes visitor actor tables that do not correspond to anything in the
 decompiled engine. It is a useful sketch of the client/relay shape, nothing more.
 
-## Recommended architecture
+## What the PC port already gives us (verified from source, Sept 2026)
 
-Fork or contribute to ACGC-PC-Port. Everything below lives in the game's own C code.
+- Decompilation is 99.52% complete. The port is 32-bit only because JSystem casts pointers
+  to `u32`, so builds use MSYS2 MINGW32 on Windows. A Linux i686 toolchain file exists but
+  Linux is unofficial.
+- **Slot-B travel is already implemented on PC** in `pc/src/pc_m_card.c`, despite the README
+  listing it as missing. A second GCI file in `save/` is treated as memory card B. The train
+  station checks it, the visiting player's "passport" (their `Private_c` player block plus
+  the departing villager) is written and read, and the visited town is saved back on return.
+  The relevant entry points are `mCD_CheckStation_bg`, `mCD_SaveStation_NextLand_bg`,
+  `mCD_SaveStation_Passport_bg`, `mCD_toNextLand`, and `mCD_ReCheckLoadLand`.
+- Sizes that matter: a whole town save is 0x72000 bytes (about 467 KB), a passport is about
+  10 KB. Sending either over the network at join time is trivial.
+- The player is a singleton by construction: `GET_PLAYER_ACTOR_NOW()` returns the first
+  actor in the `ACTOR_PART_PLAYER` list, used from 36 files. Actors are spawned through
+  `Actor_info_make_actor(profile_no, ...)`, with 200 actor slots across 8 parts.
+- The player draw code in `src/game/m_player_draw.c_inc` is data driven from the actor and
+  never touches the current save. Model, face, clothing, and palette selection in
+  `src/game/m_player_lib.c` do read the global `Now_Private`, in roughly ten small
+  functions. That is the one refactor a second visible human needs.
+- Once-per-frame hook point for a network tick: `VIWaitForRetrace` in `pc/src/pc_vi.c`,
+  which already pumps SDL events.
+- The maintainer's FAQ says online play is **not planned** and raises security concerns.
+  So this is a fork, with foundation fixes offered upstream. The security point is valid and
+  is designed for below.
 
-**Session model.** One player hosts their town. Others join and arrive via the train, exactly
-as a slot-B visitor would. Each visitor plays as their own character, using their own save.
-When they leave, their save keeps their inventory changes and the host's town keeps what
-they did to it, reusing the existing visit write-back logic.
+## Plan
 
-**Networked memory card B.** On join, the host sends its town data (the same bytes that would
-live on card B). The visitor's client loads it through the existing visit code path. From
-then on every client runs a full local simulation of the same town.
+### Step 0. Set up the fork
 
-**Puppet actor.** A new actor type that reuses the player's model, animation, and draw code
-but is driven by network state instead of input. Synced per player at 20 to 30 Hz:
-position, facing, animation index and frame, held item or tool, clothing and face, emote,
-and speech bubble text. Puppets are only drawn when in the same room or field cell.
+Import ACGC-PC-Port into this repository as the base (add it as `upstream`, merge its
+history) so upstream fixes can be pulled with a plain merge. Vendor ENet under `pc/lib/`
+next to `glad` and `fixnes`, matching how the port already vendors libraries. Reproduce the
+MSYS2 MINGW32 build and confirm a slot-B visit works locally with two GCI files.
 
-**Host-authoritative world events.** Anything that mutates the town is sent as an event and
-validated by the host: item pickup and drop, tree shake, rock hit, dug or filled hole, bells,
-furniture placed, gate state. Villager NPC positions and dialogue state stream from host to
-visitors so everyone sees the same town. The host's clock is the world clock.
+### Step 1. Networked memory card B
 
-**Transport.** UDP with a small reliable layer (ENet or similar) for direct connect, plus an
-optional relay for players behind NAT. Chat can reuse the game's existing letter-writing
-text entry.
+Replace the "second GCI in `save/`" source with a network source behind the same functions
+in `pc_m_card.c`. Host mode serves its town save on join. Visitor mode receives it into the
+card-B buffer, so the existing station code sees a valid travel destination and the visitor
+arrives by train exactly as today. Passport goes visitor to host. Return trip sends the
+visitor's updated passport home and the host's town save-back stays local. Milestone: two
+PCs, one visitor riding into the host's town over the network, with no second visible
+character yet.
 
-## Phases
+### Step 2. Puppet actor
 
-1. **Foundation.** Build the PC port from source. Get the slot-B visit flow fully working in
-   the port (the port's README lists town visiting as missing, and a "black screen after
-   returning from a slot B visit" bug was fixed upstream in May 2026, so it is partly there).
-   This is the base everything else stands on and is a contribution upstream wants.
-2. **Transport and lobby.** Host, join, send town data, visitor arrives by train.
-3. **Puppets.** Second visible character, synced movement and animation.
-4. **World event sync.** Items, trees, holes, bells, gate. Host validation.
-5. **Chat, villager sync, time sync.**
-6. **Three and four player sessions, relay server, polish.**
+New actor profile, `mAc_PROFILE_PUPPET`, registered in the NPC part so nothing that looks
+up the player finds it. Its struct embeds `PLAYER_ACTOR` so `Player_actor_draw_Normal` and
+the animation code work unchanged. Give the model, face, cloth, and palette lookups in
+`m_player_lib.c` a `Private_c*` parameter with the old global as the default, and pass the
+remote player's passport for puppets. Each client sends its own player state at 20 to 30 Hz:
+position, facing, animation index and frame, held item, emote. Interpolate on receive.
+Milestone: host and visitor see each other walk around.
 
-## Constraints
+### Step 3. Host-authoritative world events
 
-- Only the USA v1.0 disc (`GAFE01`, revision 0) is supported by the decomp and the port.
-- No game assets are ever committed. Players supply their own disc image.
-- Licensing: the decompiled code is CC0, the PC port layer is MIT. Our additions should be MIT.
+Anything that changes the town is an event validated by the host: pick up, drop, tree
+shake, rock hit, dig, fill, bells, furniture, gate. Visitors apply the host's decision.
+Villager positions, schedules, and dialogue locks stream host to visitors. Host clock is the
+world clock. Puppets are only drawn in the same room or acre.
+
+### Step 4. Chat, then three and four players
+
+Chat reuses the game's keyboard text entry, sanitized to the game's character set on
+receive. Extend puppet slots and passports to four players. Add an optional relay server
+for players behind NAT.
+
+### Security design (why RAM injection was the wrong tool)
+
+Because all sync goes through explicit, typed messages, the host validates every byte:
+checksum and bounds-check the passport, reject impossible positions and item ids, never
+apply raw memory writes. The visitor never has write access to the host's town except
+through validated events. This is the answer to the upstream FAQ's concern.
+
+### Out of scope
+
+Dolphin support, the N64 version, e-Reader and GBA link, and any distribution of game data.
 
 ## Sources
 
