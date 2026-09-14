@@ -1,0 +1,166 @@
+/* m_puppet.c_inc - networked puppet residents (multiplayer fork).
+ *
+ * Included at the END of m_player.c so it can reuse the file's static player
+ * helpers and the player model. A puppet is a PLAYER_ACTOR instance placed in
+ * the NPC actor part (so nothing that looks up "the player" finds it, and so
+ * it keeps updating even when off-screen), driven entirely by network state.
+ *
+ * FIRST CUT (step 2, milestone 1): position and facing sync only. The puppet
+ * stands in the player's bind pose and slides/turns to match the remote
+ * player; it is not yet limb-animated, and it shares the local player's
+ * loaded outfit/face because the engine keeps only one player texture bank.
+ * Those are the next iterations. Everything here is compiled only for the PC
+ * build and is inert unless a server is connected. See docs/MULTIPLAYER.md.
+ */
+#ifdef TARGET_PC
+
+#include "ac_puppet.h"
+#include "pc_net.h"
+
+#define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
+
+/* Construct the body skeleton the way the player does, but WITHOUT the global
+ * side effects (no balloon child actor, no player_actor_exists flag, no camera
+ * request). Leaves the skeleton in its bind pose. */
+static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    (void)game;
+
+    actorx->scale.x = 0.01f;
+    actorx->scale.y = 0.01f;
+    actorx->scale.z = 0.01f;
+
+    p->animation0_idx = -1;
+    p->animation1_idx = -1;
+    p->part_table_idx = -1;
+    p->now_main_index = mPlayer_INDEX_WAIT;
+    p->now_item_main_index = 0;
+    p->item_kind = 0;
+
+    cKF_SkeletonInfo_R_ct(&p->keyframe0, mPlib_get_player_mdl_p(), NULL, p->joint_data, p->morph_data);
+    p->keyframe1 = p->keyframe0;
+
+    Shape_Info_init(actorx, 0.0f, &mAc_ActorShadowCircle, 18.0f, 18.0f);
+    actorx->shape_info.ofs_y = 200.0f;
+
+    /* Draw regardless of the usual player cull volume: we always want to see
+     * other residents when they are in our scene. */
+    actorx->cull_width = 100000.0f;
+    actorx->cull_height = 100000.0f;
+    actorx->cull_distance = 100000.0f;
+    actorx->cull_radius = 100000.0f;
+}
+
+static void Puppet_actor_dt(ACTOR* actorx, GAME* game) {
+    (void)actorx;
+    (void)game;
+}
+
+/* Per-frame: nothing to advance yet (bind pose). Limb animation from the
+ * network arrives in a later iteration. Kept as a proc so the profile is
+ * complete and the hook exists. */
+static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
+    (void)actorx;
+    (void)game;
+}
+
+static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
+    /* Reuse the player's normal draw. It reads some current-player globals
+     * (outfit bank, main index), so the first cut shares the local player's
+     * appearance; parameterizing that is the next step. */
+    Player_actor_draw_Normal(actorx, game);
+}
+
+ACTOR_PROFILE Puppet_Profile = {
+    mAc_PROFILE_PUPPET,
+    ACTOR_PART_NPC,
+    0,
+    EMPTY_NO,
+    ACTOR_OBJ_BANK_KEEP,
+    sizeof(PLAYER_ACTOR),
+    &Puppet_actor_ct,
+    &Puppet_actor_dt,
+    &Puppet_actor_move,
+    &Puppet_actor_draw,
+    NULL,
+};
+
+/* Find the puppet actor for a given resident slot, or NULL. */
+static ACTOR* Puppet_find(GAME_PLAY* play, int slot) {
+    ACTOR* a = play->actor_info.list[ACTOR_PART_NPC].actor;
+    while (a != NULL) {
+        if (a->id == PUPPET_PROFILE_ID && a->actor_specific == slot) {
+            return a;
+        }
+        a = a->next_actor;
+    }
+    return NULL;
+}
+
+void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
+    GAME_PLAY* play = (GAME_PLAY*)game;
+    PLAYER_ACTOR* lp = (PLAYER_ACTOR*)player_actor;
+    int local_slot = pc_net_local_slot();
+    int slot;
+
+    if (local_slot < 0) {
+        return; /* single-player: no server connected */
+    }
+
+    /* 1. Broadcast our own state. */
+    pc_net_send_player_state(player_actor->world.position.x, player_actor->world.position.y,
+                             player_actor->world.position.z, player_actor->shape_info.rotation.y,
+                             (unsigned)lp->now_main_index, lp->keyframe0.frame_control.current_frame,
+                             (unsigned)(u8)lp->item_kind, 0u, 0u, 0u);
+
+    /* 2. Update existing puppets from network state, deleting those whose
+     *    resident has gone. Capture next_actor before any delete. */
+    {
+        ACTOR* a = play->actor_info.list[ACTOR_PART_NPC].actor;
+        while (a != NULL) {
+            ACTOR* next = a->next_actor;
+            if (a->id == PUPPET_PROFILE_ID) {
+                float x, y, z, frame;
+                int ang;
+                unsigned anim, item, emote, area;
+                if (pc_net_get_remote_fields(a->actor_specific, &x, &y, &z, &ang, &anim, &frame,
+                                             &item, &emote, &area)) {
+                    a->world.position.x = x;
+                    a->world.position.y = y;
+                    a->world.position.z = z;
+                    a->shape_info.rotation.y = (s16)ang;
+                } else {
+                    Actor_info_delete(&play->actor_info, a, game);
+                }
+            }
+            a = next;
+        }
+    }
+
+    /* 3. Spawn a puppet for any present resident that does not have one. */
+    for (slot = 0; slot < 4; slot++) {
+        float x, y, z, frame;
+        int ang;
+        unsigned anim, item, emote, area;
+        if (slot == local_slot) {
+            continue;
+        }
+        if (!pc_net_get_remote_fields(slot, &x, &y, &z, &ang, &anim, &frame, &item, &emote, &area)) {
+            continue;
+        }
+        if (Puppet_find(play, slot) != NULL) {
+            continue;
+        }
+        Actor_info_make_actor(&play->actor_info, game, mAc_PROFILE_PUPPET, x, y, z, 0, (s16)ang, 0,
+                              -1, -1, -1, EMPTY_NO, (s16)slot, -1, -1);
+    }
+}
+
+#else /* !TARGET_PC : puppets are a PC-build-only feature */
+
+void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
+    (void)player_actor;
+    (void)game;
+}
+
+#endif /* TARGET_PC */

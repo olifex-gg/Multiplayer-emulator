@@ -1035,6 +1035,8 @@ enum actor_profile_table {
     mAc_PROFILE_PTERMINAL,
     mAc_PROFILE_MSCORE_CONTROL,
 
+    mAc_PROFILE_PUPPET, /* multiplayer fork: networked "other resident" actor */
+
     mAc_PROFILE_NUM
 };
 

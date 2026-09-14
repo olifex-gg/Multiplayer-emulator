@@ -1,4 +1,5 @@
 #include "m_player_lib.h"
+#include "ac_puppet.h" /* multiplayer fork: networked resident hook */
 
 #include "libultra/libultra.h"
 #include "m_play.h"
@@ -1721,6 +1722,12 @@ extern void Player_actor_move(ACTOR* actorx, GAME* game) {
     int idx;
 
     Player_actor_move_other_func1(actorx, game); //
+
+    /* Multiplayer fork: broadcast our state and drive other residents'
+     * puppets. No-op in single-player. Runs before the early-out below so it
+     * fires every frame regardless of the local player's current state. */
+    Puppet_net_update_local(actorx, game);
+
     idx = player->now_main_index;
     if (mPlayer_MAIN_INDEX_VALID(idx) == FALSE || proc[idx] == NULL) {
         return;
@@ -1790,3 +1797,7 @@ extern void Player_actor_draw(ACTOR* actorx, GAME* game) {
         }
     }
 }
+
+/* multiplayer fork: networked puppet residents (reuses this file's static
+ * player draw/animation helpers). Kept last so those are already defined. */
+#include "m_puppet.c_inc"

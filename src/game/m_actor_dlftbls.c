@@ -245,6 +245,7 @@
 #include "ac_windmill.h"
 #include "ac_yatai.h"
 #include "ac_weather.h"
+#include "ac_puppet.h" /* multiplayer fork */
 
 #define MAKE_ACTOR_DLF(actor)\
   {0,0,NULL,NULL,NULL,&actor##_Profile, 0,0,0,0}
@@ -499,13 +500,18 @@ ACTOR_DLFTBL actor_dlftbls[] = {
   MAKE_ACTOR_DLF(Npc_Hem),
   MAKE_ACTOR_DLF(Tent),
   MAKE_ACTOR_DLF(Pterminal),
-  MAKE_ACTOR_DLF(Mscore_Control)
+  MAKE_ACTOR_DLF(Mscore_Control),
+#ifdef TARGET_PC
+  MAKE_ACTOR_DLF(Puppet)     /* multiplayer fork: networked resident */
+#else
+  MAKE_ACTOR_NULL()
+#endif
 };
 
 int actor_dlftbls_num;
 
 extern void actor_dlftbls_init() {
-  actor_dlftbls_num = 246;
+  actor_dlftbls_num = 247;
 }
 
 extern void actor_dlftbls_cleanup() {
