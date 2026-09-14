@@ -54,6 +54,13 @@ extern "C" {
 #ifdef errno
 #undef errno
 #endif
+#if defined(TARGET_PC) && !defined(_WIN32)
+/* glibc defines errno as a macro, which breaks the `errno` field below.
+ * No PC-layer file that includes this header uses libc errno. */
+#include <errno.h>
+#undef errno
+#endif
+
 typedef struct {
     u16 type;
     u8 status;

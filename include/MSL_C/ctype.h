@@ -1,8 +1,14 @@
-#ifndef _CTYPE_H
-#define _CTYPE_H
+#ifndef _MSL_C_CTYPE_H /* not _CTYPE_H: that is glibc's own guard and would hide <ctype.h> */
+#define _MSL_C_CTYPE_H
 
 #ifdef TARGET_PC
 #include <ctype.h> // Conflicts can happen otherwise in certain compiler versions
+#ifndef _tolower
+#define _tolower(c) tolower(c)
+#endif
+#ifndef _toupper
+#define _toupper(c) toupper(c)
+#endif
 #else
 
 #include "MSL_C/locale.h"

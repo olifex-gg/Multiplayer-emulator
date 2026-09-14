@@ -28,6 +28,13 @@ f32 facos(f32);
 s16 sins(u16);
 s16 coss(u16);
 f32 fatan2(f32, f32);
+#ifndef _WIN32
+/* glibc declares float fsqrt(double) (C2X narrowing function) whenever
+ * _GNU_SOURCE is on, which g++ always sets. Pull <math.h> in first so the
+ * rename below cannot touch glibc's own declaration, then rename ours. */
+#include <math.h>
+#define fsqrt ac_fsqrt
+#endif
 f32 fsqrt(f32);
 f32 facos(f32);
 #endif

@@ -3,6 +3,16 @@
 
 #include "stddef.h"
 
+#if defined(TARGET_PC) && !defined(_WIN32)
+#include <string.h> /* glibc's prototypes differ (noexcept in C++); the MSL extras are unused on PC */
+#ifdef __cplusplus
+namespace std {
+using ::strlen;
+using ::strrchr;
+}; // namespace std
+#endif
+#else /* !TARGET_PC || _WIN32 */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,5 +43,7 @@ using ::strlen;
 using ::strrchr;
 }; // namespace std
 #endif
+
+#endif /* !TARGET_PC || _WIN32 */
 
 #endif /* _MSL_COMMON_STRING_H */
