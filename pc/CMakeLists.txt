@@ -49,6 +49,19 @@ add_compile_options(
     -O2
     -fno-strict-aliasing
     -fwrapv
+    # Use SSE2 for all float math instead of the i686 default x87 FPU.
+    # The game relies on float->s16 conversions wrapping modulo 2^16 the way
+    # the GameCube's fctiwz+sth does (e.g. DEG2SHORT_ANGLE of angles past
+    # +-180 degrees, and the morph path in cKF_SkeletonInfo_subRotInterpolation).
+    # With x87, GCC emits a 16-bit fistp which turns every out-of-range value
+    # into 0x8000 = exactly 180 degrees, so joints snap upside down for a frame
+    # whenever an animation blends across the +-180 boundary. SSE converts via a
+    # 32-bit cvttss2si and then truncates, matching the console. SSE math also
+    # keeps intermediates at true single precision instead of x87's 80 bits.
+    -msse2
+    -mfpmath=sse
+    # Win32 callbacks only guarantee 4-byte stack alignment; realign for SSE.
+    -mstackrealign
 )
 
 # =============================================================================
