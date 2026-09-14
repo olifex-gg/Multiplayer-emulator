@@ -47,3 +47,6 @@ temp/
 include/PR/
 include/gcc/
 include/compiler/gcc/stdlib.h
+
+# Windows cross-compile output
+buildwin/

@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h> /* _mkdir */
+#endif
 
 #include "protocol.h"
 #include <dolphin/os.h> /* OSReport */
@@ -32,7 +35,7 @@ typedef struct {
 } net_config_t;
 
 static net_config_t s_cfg;
-static ENetHost*    s_host;
+static ENetHost*    s_client_host;
 static ENetPeer*    s_peer;
 static int          s_active;          /* logged in and town in place */
 static int          s_slot = -1;
@@ -219,13 +222,13 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
 
 static int pump_until(uint8_t want, uint32_t timeout_ms) {
     uint32_t deadline = enet_time_get() + timeout_ms;
-    if (!s_host) return -1;
+    if (!s_client_host) return -1;
     for (;;) {
         ENetEvent ev;
         uint32_t now = enet_time_get();
         int rc;
         if ((int32_t)(deadline - now) <= 0) return 0;
-        rc = enet_host_service(s_host, &ev, deadline - now);
+        rc = enet_host_service(s_client_host, &ev, deadline - now);
         if (rc < 0) return -1;
         if (rc == 0) continue;
         if (ev.type == ENET_EVENT_TYPE_DISCONNECT) {
@@ -279,8 +282,8 @@ int pc_net_init(void) {
         OSReport("[net] enet_initialize failed; starting in single-player\n");
         return 0;
     }
-    s_host = enet_host_create(NULL, 1, ACNET_CHANNELS, 0, 0);
-    if (!s_host) {
+    s_client_host = enet_host_create(NULL, 1, ACNET_CHANNELS, 0, 0);
+    if (!s_client_host) {
         OSReport("[net] could not create client host; single-player\n");
         return 0;
     }
@@ -291,9 +294,9 @@ int pc_net_init(void) {
     addr.port = (enet_uint16)s_cfg.port;
     OSReport("[net] connecting to %s:%d, town '%s', as '%s'\n", s_cfg.host, s_cfg.port, s_cfg.invite,
              s_cfg.name);
-    s_peer = enet_host_connect(s_host, &addr, ACNET_CHANNELS, 0);
+    s_peer = enet_host_connect(s_client_host, &addr, ACNET_CHANNELS, 0);
     if (!s_peer) return 0;
-    rc = enet_host_service(s_host, &ev, 5000);
+    rc = enet_host_service(s_client_host, &ev, 5000);
     if (rc <= 0 || ev.type != ENET_EVENT_TYPE_CONNECT) {
         OSReport("[net] could not reach server; starting in single-player\n");
         enet_peer_reset(s_peer);
@@ -361,7 +364,7 @@ void pc_net_on_saved(int reason) {
     u.reason = (uint8_t)reason;
     send_msg(ACNET_CH_CONTROL, ACNET_MSG_TOWN_UPLOAD, &u, sizeof(u), blob, len, 1);
     free(blob);
-    enet_host_flush(s_host);
+    enet_host_flush(s_client_host);
     (void)pump_until(ACNET_MSG_TOWN_ACK, 10000);
 }
 
@@ -369,19 +372,19 @@ void pc_net_shutdown(void) {
     if (s_peer) {
         if (s_active) pc_net_on_saved(ACNET_UPLOAD_LEAVE);
         enet_peer_disconnect(s_peer, 0);
-        if (s_host) {
+        if (s_client_host) {
             ENetEvent ev;
             uint32_t end = enet_time_get() + 1000;
-            while ((int32_t)(end - enet_time_get()) > 0 && enet_host_service(s_host, &ev, 100) >= 0) {
+            while ((int32_t)(end - enet_time_get()) > 0 && enet_host_service(s_client_host, &ev, 100) >= 0) {
                 if (ev.type == ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(ev.packet);
                 if (ev.type == ENET_EVENT_TYPE_DISCONNECT) break;
             }
         }
         s_peer = NULL;
     }
-    if (s_host) {
-        enet_host_destroy(s_host);
-        s_host = NULL;
+    if (s_client_host) {
+        enet_host_destroy(s_client_host);
+        s_client_host = NULL;
         enet_deinitialize();
     }
     s_active = 0;
