@@ -43,6 +43,14 @@ extern void Matrix_MtxtoMtxF(Mtx* src, MtxF* dest);
 extern void Matrix_reverse(MtxF* m);
 extern void Matrix_to_rotate_new(MtxF* m, s_xyz* vec, int flag);
 extern void Matrix_to_rotate2_new(MtxF* m, s_xyz* vec, int flag);
+#ifdef TARGET_PC
+/* Like Matrix_to_rotate2_new, but returns the Euler solution on the same
+ * "branch" as ref. A rotation has two equivalent Euler triples 180 degrees
+ * apart; the plain decomposition always picks the |y|<90 one, which jumps
+ * by 180 when the input crosses 90. This keeps continuity with ref. The
+ * resulting orientation is identical either way. */
+extern void Matrix_to_rotate2_new_keep_branch(MtxF* m, s_xyz* vec, const s_xyz* ref, int flag);
+#endif
 extern void Matrix_RotateVector(s16 angle, xyz_t* axis, u8 flag);
 extern void suMtxMakeTS(Mtx* m, f32 scaleX, f32 scaleY, f32 scaleZ, f32 translateX, f32 translateY, f32 translateZ);
 extern void suMtxMakeSRT(Mtx* m, f32 scaleX, f32 scaleY, f32 scaleZ, s16 rotX, s16 rotY, s16 rotZ, f32 translateX, f32 translateY, f32 translateZ);

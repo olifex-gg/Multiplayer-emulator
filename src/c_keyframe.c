@@ -296,16 +296,6 @@ static s16 cKF_KeyCalc(s16 start_idx, s16 n_frames, s16* data_src, f32 frame) {
                  * upside down" glitch. Clamp to the s16 range so an overshoot
                  * can no longer wrap. Only affects out-of-range samples. */
                 if (calc > 32767.0f || calc < -32768.0f) {
-                    /* Detective log (temporary): report how far the curve
-                     * overshoots, to confirm whether the skeleton is still a
-                     * flip source after the clamp. Budget-limited. */
-                    static int kf_budget = 200;
-                    if (kf_budget > 0) {
-                        kf_budget--;
-                        OSReport("[flipwatch-kf] overshoot calc=%.1f (n0=%d n1=%d t0=%d t1=%d)\n",
-                                 (double)calc, key_p[now].value, key_p[next].value, key_p[now].tangent,
-                                 key_p[next].tangent);
-                    }
                     calc = (calc > 32767.0f) ? 32767.0f : -32768.0f;
                 }
                 key = (int)(calc + (calc >= 0.0f ? 0.5f : -0.5f));
@@ -1386,7 +1376,14 @@ extern void cKF_SkeletonInfo_R_AnimationMove_base(xyz_t* base, s16* sbase, xyz_t
         update_base = &keyframe->updated_base_model_rotation;
         Matrix_push();
         Matrix_rotateXYZ(keyframe->current_joint[1].x, keyframe->current_joint[1].y, keyframe->current_joint[1].z, MTX_LOAD);
+#ifdef TARGET_PC
+        /* Keep the decomposed angles on the same branch as the input joint so
+         * the base rotation cannot jump 180 degrees for a frame (the
+         * "characters flip upside down" bug). See sys_matrix.c. */
+        Matrix_to_rotate2_new_keep_branch(get_Matrix_now(), update_base, &keyframe->current_joint[1], MTX_LOAD);
+#else
         Matrix_to_rotate2_new(get_Matrix_now(), update_base, MTX_LOAD);
+#endif
         Matrix_pull();
         *sbase = angley + angle_c + (update_base->x - base_x);
     }

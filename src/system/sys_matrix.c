@@ -778,6 +778,29 @@ void Matrix_to_rotate2_new(MtxF* curm, s_xyz* v, int flag) {
     }
 }
 
+#ifdef TARGET_PC
+/* Multiplayer fork fix for "characters flip upside down for a frame".
+ * The skeleton draw builds a matrix from the root joint's angles and then
+ * decomposes it back into angles. For any orientation there are two valid
+ * Euler answers, (x,y,z) and (x+180, 180-y, z+180). The decomposition always
+ * returns the |y|<90 one, so when the root joint's y crosses 90 degrees the
+ * recovered x/y/z all jump by ~180 for that frame, spinning the whole model
+ * while its position (and shadow) stay put. The console never hit this
+ * because it only samples the authored keyframes; the port's variable-rate
+ * sampling can overshoot the boundary by a hair. Snap the answer back onto
+ * the input's branch; the orientation is unchanged, only the jump is gone. */
+void Matrix_to_rotate2_new_keep_branch(MtxF* m, s_xyz* vec, const s_xyz* ref, int flag) {
+    s16 dx;
+    Matrix_to_rotate2_new(m, vec, flag);
+    dx = (s16)(vec->x - ref->x);
+    if (dx > 0x4000 || dx < -0x4000) { /* more than 90 degrees off: other branch */
+        vec->x = (s16)(vec->x + 0x8000);
+        vec->y = (s16)(0x8000 - vec->y);
+        vec->z = (s16)(vec->z + 0x8000);
+    }
+}
+#endif
+
 void Matrix_RotateVector(s16 angle, xyz_t* axis, u8 mode) {
     MtxF* curm;
     f32 sin;
