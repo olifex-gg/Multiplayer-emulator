@@ -69,7 +69,15 @@ static const char* DEFAULT_SETTINGS =
     "[Input]\n"
     "# Gamepad stick deadzones as a percentage (0-40)\n"
     "stick_deadzone = 12\n"
-    "cstick_deadzone = 12\n";
+    "cstick_deadzone = 12\n"
+    "\n"
+    "[Network]\n"
+    "# Shared-town multiplayer. Leave 'server' blank for single-player.\n"
+    "# server        = town.example.org\n"
+    "# server_port   = 7777\n"
+    "# invite        = your-invite-code\n"
+    "# player_name   = yourname\n"
+    "# resident_slot =            ; leave blank to be assigned the next free slot\n";
 
 static const char* skip_ws(const char* s) {
     while (*s == ' ' || *s == '\t') s++;

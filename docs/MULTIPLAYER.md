@@ -171,6 +171,37 @@ for an evening with no visible drift.
 **Step 4. Chat, clock, hardening.** Chat through the game's text entry, server clock
 offset, reconnect handling, snapshot cadence tuning, a `docker compose` for the server.
 
+### Status (this branch)
+
+Step 0 is done and step 1 is in place end to end, built and tested here:
+
+- **Fork imported.** `flyngmt/ACGC-PC-Port` is merged in with full history under the
+  `upstream` remote, so its fixes come in with a plain merge. The upstream README is at the
+  root behind a fork banner.
+- **ENet vendored.** `pc/lib/enet` (v1.3.18, MIT) builds as a static library for both the
+  game client and the server.
+- **The game builds on 64-bit Linux hosts as a 32-bit binary.** The upstream port was
+  Windows-only in practice; a handful of decompiled headers clashed with glibc
+  (`bcmp`/`bcopy`, the pad `errno` field, `fsqrt`, `memcpy` `noexcept`, an MSL `ctype`
+  guard). Each is fixed behind `#if defined(TARGET_PC) && !defined(_WIN32)`, so the Windows
+  build is untouched. Build it with the 32-bit toolchain (`pc/cmake/Toolchain-linux32.cmake`
+  or `-m32` with `libsdl2-dev:i386`).
+- **The server is written, builds, and passes an end-to-end test** (`server/`, run with
+  `ctest`). It stores each town, assigns resident slots by login name, serves the town on
+  login, and on upload splices back every other resident's own private and house blocks and
+  repairs the save checksum, so no client can overwrite another resident's character. It
+  also relays chat and player-state packets, elects and migrates a world-authority client,
+  and serves its clock. It never runs the game.
+- **The client connects** (`pc/src/pc_net.c`). Reading a `[Network]` block from
+  `settings.ini`, it logs in, downloads the shared town onto disk before the game's normal
+  load path runs, and re-uploads after each in-game save. With no server configured every
+  entry point is a no-op, so single-player is unchanged.
+
+What step 1 does **not** yet do: show a second character (that is step 2, the puppet actor),
+apply incoming player-state or chat (counted but not yet rendered), or converge live town
+changes (step 3). Today two people can load the same town as different residents from the
+server and save it back safely; they will not see each other move until step 2.
+
 ### Not doing (and why)
 
 - **Running the game headless on the server.** Would need a Linux 32-bit build, a null GX

@@ -931,6 +931,13 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
         return mCD_TRANS_ERR_IOERROR;
     }
 
+    /* Multiplayer: push the freshly-written home town to the server. No-op
+     * in single-player. reason 1 = ACNET_UPLOAD_SAVE. */
+    {
+        extern void pc_net_on_saved(int reason);
+        pc_net_on_saved(1);
+    }
+
     return mCD_TRANS_ERR_NONE;
 }
 

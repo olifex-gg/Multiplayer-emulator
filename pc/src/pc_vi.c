@@ -50,6 +50,8 @@ void VIWaitForRetrace(void) {
     }
     pc_profiler_add_time(PC_PROF_TIMER_POLL_EVENTS, t_before_poll);
 
+    { extern void pc_net_service(void); pc_net_service(); }
+
     /* Drain the frame's last deferred batch here so its cost bills to
      * gx_flush instead of inflating the swap timer. */
     {

@@ -1,4 +1,7 @@
 /* pc_main.c - PC entry point: SDL2/GL init and boot sequence */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* Dl_info / dladdr from <dlfcn.h> on glibc */
+#endif
 #include "pc_platform.h"
 #include "pc_gx_internal.h"
 #include "pc_texture_pack.h"
@@ -6,6 +9,7 @@
 #include "pc_keybindings.h"
 #include "pc_assets.h"
 #include "pc_disc.h"
+#include "pc_net.h"
 #include "pc_typing.h"
 #include "pc_pause_menu.h"
 #include "pc_settings_menu.h"
@@ -397,9 +401,12 @@ int main(int argc, char* argv[]) {
     }
 
     ac_entry();                         /* sets HotStartEntry = &entry */
+    pc_net_init(); /* connect to town server (no-op in single-player); writes card_a before load */
+
     boot_main(argc, (const char**)argv); /* full init → HotStartEntry → game loop */
 
     pc_disc_shutdown();
+    pc_net_shutdown();
     pc_platform_shutdown();
     return 0;
 }
