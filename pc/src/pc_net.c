@@ -45,6 +45,7 @@ static ENetHost*    s_client_host;
 static ENetPeer*    s_peer;
 static int          s_active;          /* logged in and town in place */
 static int          s_slot = -1;
+static int          s_claimed_no = -1;  /* the save block we last told the server about */
 static int          s_authority_id = -1;
 static int          s_self_id = -1;
 static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
@@ -310,6 +311,11 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         if (a.status == ACNET_ACK_OK) {
             s_town_version = a.town_version;
             OSReport("[net] town uploaded, now v%u\n", a.town_version);
+            if (a.by_slot < ACNET_MAX_PLAYERS && (int)a.by_slot != s_slot) {
+                OSReport("[net] server has us as resident %u (was %d)\n", a.by_slot, s_slot);
+                s_slot = a.by_slot;
+                remote_drop_slot(s_slot);
+            }
         } else {
             OSReport("[net] town upload refused (status %u)\n", a.status);
         }
@@ -351,6 +357,27 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
                      r.slot, r.town_version);
         }
         return ACNET_MSG_RESIDENT_DATA;
+    }
+    case ACNET_MSG_SLOT: {
+        acnet_slot_t r;
+        if (payload_len != sizeof(r)) return -1;
+        memcpy(&r, payload, sizeof(r));
+        if (r.slot < ACNET_MAX_PLAYERS) {
+            if ((int)r.slot != s_slot) remote_drop_slot(r.slot); /* never puppet ourselves */
+            s_slot = r.slot;
+        }
+        if (r.reason == ACNET_SLOT_ACCEPTED) {
+            OSReport("[net] server agrees: we are resident %u\n", r.slot);
+        } else if (r.reason == ACNET_SLOT_REFUSED) {
+            OSReport("[net] server REFUSED our move: save block %d belongs to another resident who has saved; "
+                     "we stay resident %u. Their character and house may be shown in place of ours.\n",
+                     s_claimed_no, r.slot);
+        } else {
+            OSReport("[net] server moved us to resident %u to make room for another resident's character\n",
+                     r.slot);
+            s_claimed_no = -1; /* re-check against our block next frame */
+        }
+        return ACNET_MSG_SLOT;
     }
     case ACNET_MSG_AUTHORITY: {
         acnet_authority_t a;
@@ -448,6 +475,23 @@ static int pump_until(uint8_t want, uint32_t timeout_ms) {
 
 int pc_net_enabled(void) { return s_active; }
 int pc_net_assigned_slot(void) { return s_slot; }
+
+
+void pc_net_set_player_no(int player_no) {
+    acnet_claim_slot_t q;
+    if (!s_active || player_no < 0 || player_no >= ACNET_MAX_PLAYERS) return;
+    if (player_no == s_slot) {
+        s_claimed_no = player_no;
+        return;
+    }
+    if (player_no == s_claimed_no) return; /* asked already: waiting, or it was refused */
+    s_claimed_no = player_no;
+    memset(&q, 0, sizeof(q));
+    q.player_no = (uint8_t)player_no;
+    send_msg(ACNET_CH_CONTROL, ACNET_MSG_CLAIM_SLOT, &q, sizeof(q), NULL, 0, 1);
+    OSReport("[net] our character lives in save block %d but the server has us as resident %d; asking to move\n",
+             player_no, s_slot);
+}
 
 int pc_net_init(void) {
     ENetAddress addr;
@@ -550,9 +594,7 @@ void pc_net_service(void) {
 
 /* --- Player-state stream (step 2) --------------------------------------- */
 
-void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned anim_index,
-                              float anim_frame, unsigned item, unsigned emote, unsigned area,
-                              unsigned flags) {
+void pc_net_send_player_state(const acnet_player_state_t* state) {
     static uint16_t seq;
     acnet_player_state_t s;
     uint32_t now;
@@ -563,18 +605,10 @@ void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned a
     if (now - s_last_state_ms < 33) return;
     s_last_state_ms = now;
     s_puppet_tx++;
-    memset(&s, 0, sizeof(s));
+    s = *state;
     s.client_id = (uint8_t)s_self_id;
     s.slot = (uint8_t)s_slot;
     s.seq = ++seq;
-    s.area = area;
-    s.x = x; s.y = y; s.z = z;
-    s.angle_y = (int16_t)angle_y;
-    s.anim_index = (uint16_t)anim_index;
-    s.anim_frame = anim_frame;
-    s.item = (uint16_t)item;
-    s.emote = (uint8_t)emote;
-    s.flags = (uint8_t)flags;
     /* Unreliable, sequenced: newest state wins, drops are fine. */
     send_msg(ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &s, sizeof(s), NULL, 0, 0);
 }
@@ -631,21 +665,9 @@ int pc_net_take_resident_update(int slot, void* private_out, size_t private_len,
     return 1;
 }
 
-int pc_net_get_remote_fields(int slot, float* x, float* y, float* z, int* angle_y,
-                             unsigned* anim_index, float* anim_frame, unsigned* item,
-                             unsigned* emote, unsigned* area) {
-    const acnet_player_state_t* s;
+int pc_net_get_remote_state(int slot, acnet_player_state_t* out) {
     if (!s_active || slot < 0 || slot >= ACNET_MAX_PLAYERS || !s_remote[slot].active) return 0;
-    s = &s_remote[slot].cur;
-    if (x) *x = s->x;
-    if (y) *y = s->y;
-    if (z) *z = s->z;
-    if (angle_y) *angle_y = s->angle_y;
-    if (anim_index) *anim_index = s->anim_index;
-    if (anim_frame) *anim_frame = s->anim_frame;
-    if (item) *item = s->item;
-    if (emote) *emote = s->emote;
-    if (area) *area = s->area;
+    if (out) *out = s_remote[slot].cur;
     return 1;
 }
 

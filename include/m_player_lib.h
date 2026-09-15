@@ -198,6 +198,16 @@ extern void mPlib_Set_change_color_request(void);
 #define GET_PLAYER_ACTOR_NOW_ACTOR() ((ACTOR*)GET_PLAYER_ACTOR_NOW())
 #define GET_PLAYER_ACTOR_GAME_ACTOR(game) ((ACTOR*)GET_PLAYER_ACTOR_GAME(game))
 
+#ifdef TARGET_PC
+/* Multiplayer fork: look up another resident's model and textures from their
+ * own save block (see m_puppet.c_inc). */
+extern cKF_Skeleton_R_c* mPlib_get_player_mdl_p_for(int gender);
+extern u32 mPlib_Get_FaceTexRom_p_for(const Private_c* priv, int swell);
+extern u32 mPlib_Get_FacePalletRom_p_for(const Private_c* priv, int swell);
+extern u32 mPlib_Get_PlayerTexRom_p_for(const Private_c* priv, int* in_aram);
+extern u32 mPlib_Get_PlayerPalletRom_p_for(const Private_c* priv, int* in_aram);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

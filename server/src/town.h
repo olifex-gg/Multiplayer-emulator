@@ -38,6 +38,17 @@ void town_close(town_t* t);
  * is ACNET_SLOT_ANY). Returns the slot or -1 when the town is full. */
 int town_assign_slot(town_t* t, const char* name, int want_slot);
 
+/* 1 when the stored town has a character in save block i (its PersonalID
+ * is not the empty 0xFFFF pair). 0 with no town yet. */
+int town_block_has_character(const town_t* t, int i);
+
+/* Move resident `name` from slot `from` to slot `to` because that is the
+ * save block their character lives in. Whoever held `to` without ever
+ * saving takes `from` instead (their name is copied to *displaced, "" if
+ * nobody). Refused (returns 0) when `to` is another resident's saved
+ * character. Returns 1 on success, including the no-op from == to. */
+int town_move_resident(town_t* t, const char* name, int from, int to, char* displaced);
+
 /* Sanity check on an uploaded blob: exact size and GCI magic. 1 = ok. */
 int town_validate_blob(const uint8_t* blob, size_t len);
 

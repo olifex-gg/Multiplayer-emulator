@@ -138,6 +138,13 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         printf("AUTHORITY client_id=%u\n", a.client_id);
         break;
     }
+    case ACNET_MSG_SLOT: {
+        acnet_slot_t r;
+        if (payload_len != sizeof(r)) return 0;
+        memcpy(&r, payload, sizeof(r));
+        printf("SLOT slot=%u reason=%u\n", r.slot, r.reason);
+        break;
+    }
     case ACNET_MSG_CHAT: {
         acnet_chat_t m;
         if (payload_len != sizeof(m)) return 0;
@@ -178,8 +185,9 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         acnet_player_state_t s;
         if (payload_len != sizeof(s)) return 0;
         memcpy(&s, payload, sizeof(s));
-        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f\n", s.client_id, s.slot, s.seq,
-               s.area, s.x, s.y, s.z);
+        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f anim=%d/%d part=%d frame=%.1f/%.1f speed=%.2f flags=%u\n",
+               s.client_id, s.slot, s.seq, s.area, s.x, s.y, s.z, s.anim0_idx, s.anim1_idx, s.part_table_idx,
+               s.anim0_frame, s.anim1_frame, s.anim_speed, s.flags);
         break;
     }
     default:
@@ -247,6 +255,8 @@ static void usage(void) {
             "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n"
             "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n"
             "       ... --state X,Y,Z      send one player-state packet after login\n"
+            "       ... --anim N           animation index to put in it (default: standing still)\n"
+            "       ... --claim N          say our character is in save block N; prints the slot we end up in\n"
             "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
             "                              so a running game keeps drawing this fake resident\n"
             "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
@@ -263,6 +273,8 @@ int main(int argc, char** argv) {
     const char* land = NULL;
     int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
     int state_every_ms = 0;
+    int anim_idx = ACNET_PLAYER_ANIM_WAIT;
+    int claim = -1;
     acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -284,6 +296,8 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--chat") == 0 && v) { chat = v; i++; }
         else if (strcmp(a, "--state") == 0 && v) { state = v; i++; }
         else if (strcmp(a, "--state-every") == 0 && v) { state_every_ms = atoi(v); i++; }
+        else if (strcmp(a, "--anim") == 0 && v) { anim_idx = atoi(v); i++; }
+        else if (strcmp(a, "--claim") == 0 && v) { claim = atoi(v); i++; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -342,11 +356,26 @@ int main(int argc, char** argv) {
     if (rc == ACNET_MSG_REJECT) { exit_code = 1; goto done; }
     if (rc <= 0) { exit_code = 3; goto done; }
 
+    if (claim >= 0) {
+        acnet_claim_slot_t q;
+        memset(&q, 0, sizeof(q));
+        q.player_no = (uint8_t)claim;
+        send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_CLAIM_SLOT, &q, sizeof(q), NULL, 0, 1);
+        rc = wait_for(host, peer, ACNET_MSG_SLOT, 5000, NULL);
+        if (rc <= 0) { exit_code = 3; goto done; }
+    }
     memset(&ps, 0, sizeof(ps));
     if (state) {
         sscanf(state, "%f,%f,%f", &ps.x, &ps.y, &ps.z);
         ps.seq = 1;
-        ps.anim_index = 7;
+        /* Frame 1 of the animation at speed 0: a clean held pose, since this
+         * fake resident never advances it. */
+        ps.anim0_idx = (int16_t)anim_idx;
+        ps.anim1_idx = (int16_t)anim_idx;
+        ps.part_table_idx = 0;
+        ps.anim0_frame = 1.0f;
+        ps.anim1_frame = 1.0f;
+        ps.anim_speed = 0.0f;
         send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
         enet_host_flush(host);
     }

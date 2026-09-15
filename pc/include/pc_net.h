@@ -43,19 +43,20 @@ void pc_net_on_saved(int reason);
 /* Disconnect cleanly (uploads a final copy with reason LEAVE). */
 void pc_net_shutdown(void);
 
-/* The resident slot the server assigned this client (0..3), or -1. Used by
- * the player-select integration so the human is dropped straight onto their
- * own resident instead of the slot picker. */
+/* The resident slot the server assigned this client (0..3), or -1. */
 int pc_net_assigned_slot(void);
 
+/* The game reports which save block (Save_t.private_data index) its
+ * character lives in, once it knows (after player select). A resident's slot
+ * must equal that index; if the server had us elsewhere this asks it to move
+ * us. Cheap to call every frame; only talks to the server when it matters. */
+void pc_net_set_player_no(int player_no);
+
 /* ----- Step 2: player-state stream -------------------------------------- *
- * The game samples the local player once per frame and sends it; it reads
- * the other residents to drive puppet actors. These use plain scalars so no
- * game header has to include the wire protocol. angle_y is the game's s16
- * facing angle; anim_index/anim_frame are the current keyframe animation. */
-void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned anim_index,
-                              float anim_frame, unsigned item, unsigned emote, unsigned area,
-                              unsigned flags);
+ * The game fills in the local player's position, facing and animation state
+ * once per frame (everything except client_id, slot and seq, which this
+ * layer owns) and this layer sends it at up to 30 Hz. */
+void pc_net_send_player_state(const acnet_player_state_t* state);
 
 /* This client's own resident slot (0..3), or -1 when not connected. */
 int pc_net_local_slot(void);
@@ -63,11 +64,11 @@ int pc_net_local_slot(void);
 /* Number of other residents currently present (fresh state received). */
 int pc_net_remote_count(void);
 
-/* Latest known state of resident `slot`. Fills the caller-provided fields and
- * returns 1 if that resident is present, else 0. Declared with void* so game
- * headers need not include the wire protocol; the real type is
- * acnet_player_state_t and callers in pc_net-aware code cast accordingly.
- * A thin typed accessor is provided in pc_net_puppet.h for the engine side. */
+/* Latest known state of resident `slot`: returns 1 and fills *out if that
+ * resident is present (a state arrived within the last few seconds), else 0.
+ * The game drives that resident's puppet from it. */
+int pc_net_get_remote_state(int slot, acnet_player_state_t* out);
+
 /* Live resident sync. If another resident's saved character and house have
  * arrived since the last call, copy them out (big-endian, exactly as in the
  * town blob) and return 1. The caller writes them over that resident's
@@ -84,10 +85,6 @@ int  pc_net_take_land_cells(acnet_land_cell_t* out, int max);
 
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len);
-
-int pc_net_get_remote_fields(int slot, float* x, float* y, float* z, int* angle_y,
-                             unsigned* anim_index, float* anim_frame, unsigned* item,
-                             unsigned* emote, unsigned* area);
 
 /* ----- Step 4: chat and clock ------------------------------------------- */
 void pc_net_send_chat(const char* text);

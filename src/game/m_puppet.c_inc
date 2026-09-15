@@ -2,7 +2,9 @@
  *
  * Included at the END of m_player.c so it can reuse the file's static player
  * helpers and the player model. A puppet is a PLAYER_ACTOR instance driven
- * entirely by network state.
+ * entirely by network state: it stands where the other resident stands,
+ * plays the animation their game is playing, and is dressed from their own
+ * save block (model, face, skin, shirt), not from the local player's.
  *
  * WHICH ACTOR PART IT LIVES IN MATTERS. Actor parts are types: gameplay code
  * walks a part's list and blindly casts every entry to that part's struct.
@@ -15,33 +17,256 @@
  * m_camera2.c, and aINS_get_stress in ac_insect_move.c_inc) found they only
  * touch the common ACTOR header. Do not move it without repeating that audit.
  *
- * FIRST CUT (step 2, milestone 1): position and facing sync only. The puppet
- * stands in the player's bind pose and slides/turns to match the remote
- * player; it is not yet limb-animated, and it shares the local player's
- * loaded outfit/face because the engine keeps only one player texture bank.
- * Those are the next iterations. Everything here is compiled only for the PC
- * build and is inert unless a server is connected. See docs/MULTIPLAYER.md.
+ * Everything here is compiled only for the PC build and is inert unless a
+ * server is connected. See docs/MULTIPLAYER.md and docs/HANDOFF.md.
  */
 #ifdef TARGET_PC
 
 #include "ac_puppet.h"
 #include "pc_net.h"
 #include "pc_save_bswap.h"
+#include "pc_bswap.h"
 #include "m_field_info.h"
+#include "m_needlework.h"
+#include "m_private.h"
+#include "m_scene_table.h"
+#include <stddef.h>
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
 #define PUPPET_ACTOR_PART ACTOR_PART_UNUSED /* see the header comment before changing */
 
+/* The wire protocol's idea of "standing still" must be the player's own. */
+typedef char puppet_wire_anim_check[(ACNET_PLAYER_ANIM_WAIT == mPlayer_ANIM_WAIT1) ? 1 : -1];
+/* The server tells an empty save block by its PersonalID; keep the offset honest. */
+typedef char puppet_id_offset_check[(offsetof(Private_c, player_ID.player_id) == ACNET_PRIVATE_ID_OFFSET) ? 1 : -1];
+
+/* True once the resident is actually in the town. The title demo and the
+ * player-select screens run a player actor too (the title even sets
+ * player_no to 0 for its demo character), and none of that should reach
+ * the other residents. */
+static int Puppet_in_town(GAME_PLAY* play) {
+    switch (play->scene_id) {
+        case SCENE_TITLE_DEMO:
+        case SCENE_PLAYERSELECT:
+        case SCENE_PLAYERSELECT_2:
+        case SCENE_PLAYERSELECT_3:
+        case SCENE_PLAYERSELECT_SAVE:
+            return FALSE;
+        default:
+            return TRUE;
+    }
+}
+
+/* --- Look -------------------------------------------------------------
+ * One resident's face, skin and shirt as the player draw code wants them:
+ * the eye/mouth texture strip, the face palette, the shirt texture and its
+ * palette. The real player keeps exactly one copy of each in an object bank
+ * (m_player_lib.c), read from Now_Private; a puppet gets its own copy here,
+ * read from THAT resident's Private_c block, which every client has in the
+ * shared save and which live resident sync keeps fresh. */
+#define PUPPET_TEX_STRIDE 0x100
+#define PUPPET_FACE_TEX_SIZE ((mPlayer_EYE_TEX_NUM + mPlayer_MOUTH_TEX_NUM) * PUPPET_TEX_STRIDE) /* 0xE00 */
+typedef char puppet_face_size_check[(PUPPET_FACE_TEX_SIZE == 0xE00) ? 1 : -1];
+
+typedef struct {
+    int valid;
+    /* What the buffers were built from; rebuilt when any of it changes. */
+    int gender;
+    int face;
+    int cloth_idx;
+    int sunburn;
+    int swell;
+    u8  face_tex[PUPPET_FACE_TEX_SIZE] ATTRIBUTE_ALIGN(32);
+    u8  cloth_tex[mNW_DESIGN_TEX_SIZE] ATTRIBUTE_ALIGN(32);
+    u16 face_pal[mNW_PALETTE_SIZE / sizeof(u16)] ATTRIBUTE_ALIGN(32);
+    u16 cloth_pal[mNW_PALETTE_SIZE / sizeof(u16)] ATTRIBUTE_ALIGN(32);
+} puppet_look_t;
+
+static puppet_look_t s_look[ACNET_MAX_PLAYERS];
+
+/* What each puppet is currently playing, so a change can be detected. */
+typedef struct {
+    int anim0;
+    int anim1;
+    int part_table;
+    int built_gender; /* the body the actor was built with */
+    u16 seq;          /* last state sample applied */
+    int have_seq;
+} puppet_anim_t;
+
+static puppet_anim_t s_anim[ACNET_MAX_PLAYERS];
+
+static Private_c* Puppet_private(int slot) {
+    return Save_GetPointer(private_data[slot]);
+}
+
+static int Puppet_slot_has_resident(int slot) {
+    return mPr_NullCheckPersonalID(&Puppet_private(slot)->player_ID) == FALSE;
+}
+
+static int Puppet_gender(int slot) {
+    return Puppet_private(slot)->gender == mPr_SEX_FEMALE ? mPr_SEX_FEMALE : mPr_SEX_MALE;
+}
+
+/* (Re)build a resident's look from their save block if anything changed. */
+static void Puppet_look_refresh(int slot, int swell) {
+    puppet_look_t* look = &s_look[slot];
+    Private_c* priv = Puppet_private(slot);
+    int in_aram;
+    u32 src;
+
+    if (!Puppet_slot_has_resident(slot)) {
+        look->valid = 0;
+        return;
+    }
+    if (look->valid && look->gender == priv->gender && look->face == priv->face &&
+        look->cloth_idx == priv->cloth.idx && look->sunburn == priv->sunburn.rank && look->swell == swell) {
+        return;
+    }
+
+    look->gender = priv->gender;
+    look->face = priv->face;
+    look->cloth_idx = priv->cloth.idx;
+    look->sunburn = priv->sunburn.rank;
+    look->swell = swell;
+
+    /* Eyes and mouths (14 textures of 0x100), then the face palette. The
+     * palettes are stored big-endian on the disc, as in mPlib_change_player_face. */
+    _JW_GetResourceAram(mPlib_Get_FaceTexRom_p_for(priv, swell), look->face_tex, PUPPET_FACE_TEX_SIZE);
+    _JW_GetResourceAram(mPlib_Get_FacePalletRom_p_for(priv, swell), (u8*)look->face_pal, mNW_PALETTE_SIZE);
+    pc_bswap16_array(look->face_pal, mNW_PALETTE_SIZE / sizeof(u16));
+
+    /* Shirt: a built-in design from the disc, or one of their own designs
+     * straight out of their save block (already in memory order). */
+    src = mPlib_Get_PlayerTexRom_p_for(priv, &in_aram);
+    if (in_aram) {
+        _JW_GetResourceAram(src, look->cloth_tex, mNW_DESIGN_TEX_SIZE);
+    } else {
+        memcpy(look->cloth_tex, (const void*)src, mNW_DESIGN_TEX_SIZE);
+    }
+    src = mPlib_Get_PlayerPalletRom_p_for(priv, &in_aram);
+    if (in_aram) {
+        _JW_GetResourceAram(src, (u8*)look->cloth_pal, mNW_PALETTE_SIZE);
+        pc_bswap16_array(look->cloth_pal, mNW_PALETTE_SIZE / sizeof(u16));
+    } else {
+        memcpy(look->cloth_pal, (const void*)src, mNW_PALETTE_SIZE);
+    }
+
+    look->valid = 1;
+    OSReport("[puppet] resident %d looks like: %s, face %d, shirt %d%s%s\n", slot,
+             priv->gender == mPr_SEX_FEMALE ? "girl" : "boy", (int)priv->face, (int)priv->cloth.idx,
+             priv->sunburn.rank > 0 ? ", sunburnt" : "", swell ? ", bee-stung" : "");
+}
+
+/* --- Animation ---------------------------------------------------------- */
+
+static f32 Puppet_clamp_frame(const cKF_Animation_R_c* anim, f32 frame) {
+    f32 max = (f32)anim->frames;
+
+    if (!(frame >= 1.0f)) { /* also catches NaN off the wire */
+        return 1.0f;
+    }
+    if (frame > max) {
+        return max;
+    }
+    return frame;
+}
+
+/* A fresh sample of the animation we are already playing: we have been
+ * advancing it ourselves at the sender's speed, so only snap to their frame
+ * if we have drifted, which keeps 30 Hz samples from making a 60 fps puppet
+ * stutter. */
+static void Puppet_resync_frame(cKF_FrameControl_c* fc, f32 frame) {
+    f32 max = fc->max_frames;
+    f32 diff;
+
+    if (max < 1.0f) {
+        return;
+    }
+    if (!(frame >= 1.0f)) {
+        frame = 1.0f;
+    } else if (frame > max) {
+        frame = max;
+    }
+    diff = fc->current_frame - frame;
+    if (diff < 0.0f) {
+        diff = -diff;
+    }
+    if (diff > max * 0.5f) { /* wrapped around the loop */
+        diff = max - diff;
+    }
+    if (diff > 2.0f) {
+        fc->current_frame = frame;
+    }
+}
+
+/* Eyes and mouth: an animation that scripts them (yawns, laughs) drives them
+ * by frame exactly as for the player; otherwise the ordinary blink. */
+static void Puppet_face_animation(ACTOR* actorx) {
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    cKF_FrameControl_c* fc = &p->keyframe0.frame_control;
+    u8* eye_tbl = mPlib_Get_PlayerEyeTexAnimation_p(p->animation0_idx);
+    u8* mouth_tbl = mPlib_Get_PlayerMouthTexAnimation_p(p->animation0_idx);
+    int pattern = -1;
+
+    if (fc->current_frame >= 1.0f && fc->current_frame <= fc->max_frames) {
+        pattern = (int)(fc->current_frame - 1.0f);
+    }
+    if (eye_tbl != NULL && pattern >= 0) {
+        Player_actor_set_eye_pattern(actorx, eye_tbl[pattern]);
+    } else {
+        Player_actor_set_eye_pattern_normal(actorx);
+    }
+    if (mouth_tbl != NULL && pattern >= 0) {
+        Player_actor_set_mouth_pattern(actorx, mouth_tbl[pattern]);
+    } else {
+        Player_actor_set_mouth_pattern(actorx, 0);
+    }
+}
+
+/* Start `anim0`/`anim1` with `part` on the puppet, at the given frames. */
+static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int anim1, int part, f32 frame0, f32 frame1,
+                                   f32 speed, f32 morph) {
+    puppet_anim_t* a = &s_anim[slot];
+    cKF_Animation_R_c* a0 = mPlib_Get_Pointer_Animation(anim0);
+    cKF_Animation_R_c* a1 = mPlib_Get_Pointer_Animation(anim1);
+
+    if (a0 == NULL) {
+        anim0 = mPlayer_ANIM_WAIT1;
+        a0 = mPlib_Get_Pointer_Animation(anim0);
+    }
+    if (a1 == NULL) {
+        anim1 = anim0;
+        a1 = a0;
+    }
+    if (part < 0 || part >= mPlayer_PART_TABLE_NUM) {
+        part = mPlayer_PART_TABLE_NORMAL;
+    }
+
+    cKF_SkeletonInfo_R_init_standard_repeat_setframeandspeedandmorph(&p->keyframe0, a0, NULL,
+                                                                     Puppet_clamp_frame(a0, frame0), speed, morph);
+    cKF_SkeletonInfo_R_init_standard_repeat_setframeandspeedandmorph(&p->keyframe1, a1, NULL,
+                                                                     Puppet_clamp_frame(a1, frame1), speed, morph);
+    mPlib_DMA_player_Part_Table(p->part_table, part);
+    p->animation0_idx = anim0;
+    p->animation1_idx = anim1;
+    p->part_table_idx = part;
+    a->anim0 = anim0;
+    a->anim1 = anim1;
+    a->part_table = part;
+}
+
 /* Construct the body skeleton the way the player does, but WITHOUT the global
  * side effects (no balloon child actor, no player_actor_exists flag, no camera
- * request). Leaves the skeleton in its bind pose. */
+ * request), using the model for THAT resident's gender. */
 static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
-    cKF_Skeleton_R_c* mdl;
+    int slot = actorx->actor_specific;
+    int gender = Puppet_gender(slot);
+    cKF_Skeleton_R_c* mdl = mPlib_get_player_mdl_p_for(gender);
     (void)game;
 
-    OSReport("[puppet] ct: building body for resident %d\n", (int)actorx->actor_specific);
-    mdl = mPlib_get_player_mdl_p();
+    OSReport("[puppet] ct: building %s body for resident %d\n", gender == mPr_SEX_FEMALE ? "girl" : "boy", slot);
     if (mdl == NULL) {
         OSReport("[puppet] ct: no player model available; puppet will not draw\n");
         return;
@@ -51,15 +276,22 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     actorx->scale.y = 0.01f;
     actorx->scale.z = 0.01f;
 
-    p->animation0_idx = -1;
-    p->animation1_idx = -1;
-    p->part_table_idx = -1;
     p->now_main_index = mPlayer_INDEX_WAIT;
     p->now_item_main_index = 0;
     p->item_kind = 0;
 
     cKF_SkeletonInfo_R_ct(&p->keyframe0, mdl, NULL, p->joint_data, p->morph_data);
-    p->keyframe1 = p->keyframe0;
+    p->keyframe1 = p->keyframe0; /* as the player does (m_player_main_dma.c_inc) */
+
+    /* Stand still until the first state arrives, and compute that pose now
+     * so the very first draw is a real one rather than an all-zero skeleton. */
+    s_anim[slot].built_gender = gender;
+    s_anim[slot].have_seq = 0;
+    Puppet_start_animation(p, slot, mPlayer_ANIM_WAIT1, mPlayer_ANIM_WAIT1, mPlayer_PART_TABLE_NORMAL, 1.0f, 1.0f,
+                           1.0f, 0.0f);
+    Player_actor_set_eye_pattern(actorx, 0);
+    Player_actor_set_mouth_pattern(actorx, 0);
+    cKF_SkeletonInfo_R_combine_play(&p->keyframe0, &p->keyframe1, p->part_table);
     OSReport("[puppet] ct: body ready\n");
 
     Shape_Info_init(actorx, 0.0f, &mAc_ActorShadowCircle, 18.0f, 18.0f);
@@ -78,24 +310,57 @@ static void Puppet_actor_dt(ACTOR* actorx, GAME* game) {
     (void)game;
 }
 
-/* Per-frame: nothing to advance yet (bind pose). Limb animation from the
- * network arrives in a later iteration. Kept as a proc so the profile is
- * complete and the hook exists. */
+/* Per-frame: play what the other resident's game is playing. Their animation
+ * indices, frames and speed arrive with every state sample; between samples
+ * the animation runs on locally at their speed. */
 static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
-    (void)actorx;
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    int slot = actorx->actor_specific;
+    puppet_anim_t* a = &s_anim[slot];
+    acnet_player_state_t st;
     (void)game;
+
+    if (p->keyframe0.skeleton == NULL) {
+        return;
+    }
+
+    if (pc_net_get_remote_state(slot, &st)) {
+        if (st.anim0_idx != a->anim0 || st.anim1_idx != a->anim1 || st.part_table_idx != a->part_table) {
+            /* New animation: start it where the sender is, blending from the
+             * old pose over a few frames the way the player's own changes do. */
+            Puppet_start_animation(p, slot, st.anim0_idx, st.anim1_idx, st.part_table_idx, st.anim0_frame,
+                                   st.anim1_frame, st.anim_speed, -4.0f);
+        } else if (!a->have_seq || st.seq != a->seq) {
+            p->keyframe0.frame_control.speed = st.anim_speed;
+            p->keyframe1.frame_control.speed = st.anim_speed;
+            Puppet_resync_frame(&p->keyframe0.frame_control, st.anim0_frame);
+            Puppet_resync_frame(&p->keyframe1.frame_control, st.anim1_frame);
+        }
+        a->seq = st.seq;
+        a->have_seq = 1;
+    }
+
+    cKF_SkeletonInfo_R_combine_play(&p->keyframe0, &p->keyframe1, p->part_table);
+    Puppet_face_animation(actorx);
 }
 
 /* Draw just the body. Deliberately NOT Player_actor_draw_Normal: that path
  * runs per-joint callbacks for footprints, head turning, the held-item matrix
  * and the item-handover clip, all of which read state that belongs to the one
  * real player. A puppet has none of it, so it draws the skeleton with no
- * callbacks at all. Textures are the local player's bank (the engine keeps
- * only one), which is why a puppet currently wears your outfit. */
+ * callbacks, binding its own resident's textures instead of the local
+ * player's bank. */
 static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    int slot = actorx->actor_specific;
+    puppet_look_t* look = &s_look[slot];
     GRAPH* graph = game->graph;
     int buf_idx = game->frame_counter % 2;
+    u8* eye;
+    u8* mouth;
+    u8* tex;
+    u16* pal;
+    u16* face_pal;
     static int logged_first_draw;
 
     if (p->keyframe0.skeleton == NULL) {
@@ -103,16 +368,41 @@ static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
     }
     if (!logged_first_draw) {
         logged_first_draw = 1;
-        OSReport("[puppet] first draw (resident %d)\n", (int)actorx->actor_specific);
+        OSReport("[puppet] first draw (resident %d)\n", slot);
+    }
+
+    if (look->valid) {
+        int ei = p->eye_tex_idx;
+        int mi = p->mouth_tex_idx;
+
+        if (ei < 0 || ei >= mPlayer_EYE_TEX_NUM) {
+            ei = 0;
+        }
+        if (mi < 0 || mi >= mPlayer_MOUTH_TEX_NUM) {
+            mi = 0;
+        }
+        eye = look->face_tex + ei * PUPPET_TEX_STRIDE;
+        mouth = look->face_tex + (mPlayer_EYE_TEX_NUM + mi) * PUPPET_TEX_STRIDE;
+        tex = look->cloth_tex;
+        pal = look->cloth_pal;
+        face_pal = look->face_pal;
+    } else {
+        /* No save block for this resident yet (brand new, never saved):
+         * borrow the local player's bank rather than draw nothing. */
+        eye = mPlib_Get_eye_tex_p(0);
+        mouth = mPlib_Get_mouth_tex_p(0);
+        tex = mPlib_get_player_tex_p(game);
+        pal = mPlib_get_player_pallet_p(game);
+        face_pal = mPlib_get_player_face_pallet_p(game);
     }
 
     _texture_z_light_fog_prim(graph);
     OPEN_POLY_OPA_DISP(graph);
-    gSPSegment(POLY_OPA_DISP++, ANIME_1_TXT_SEG, mPlib_Get_eye_tex_p(0));
-    gSPSegment(POLY_OPA_DISP++, ANIME_2_TXT_SEG, mPlib_Get_mouth_tex_p(0));
-    gSPSegment(POLY_OPA_DISP++, ANIME_3_TXT_SEG, mPlib_get_player_tex_p(game));
-    gSPSegment(POLY_OPA_DISP++, ANIME_4_TXT_SEG, mPlib_get_player_pallet_p(game));
-    gSPSegment(POLY_OPA_DISP++, ANIME_5_TXT_SEG, mPlib_get_player_face_pallet_p(game));
+    gSPSegment(POLY_OPA_DISP++, ANIME_1_TXT_SEG, eye);
+    gSPSegment(POLY_OPA_DISP++, ANIME_2_TXT_SEG, mouth);
+    gSPSegment(POLY_OPA_DISP++, ANIME_3_TXT_SEG, tex);
+    gSPSegment(POLY_OPA_DISP++, ANIME_4_TXT_SEG, pal);
+    gSPSegment(POLY_OPA_DISP++, ANIME_5_TXT_SEG, face_pal);
     CLOSE_POLY_OPA_DISP(graph);
 
     cKF_Si3_draw_R_SV(game, &p->keyframe0, p->work_mtx[buf_idx], NULL, NULL, p);
@@ -228,17 +518,38 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         return; /* single-player: no server connected */
     }
 
-    /* 1. Broadcast our own state. */
-    pc_net_send_player_state(player_actor->world.position.x, player_actor->world.position.y,
-                             player_actor->world.position.z, player_actor->shape_info.rotation.y,
-                             (unsigned)lp->now_main_index, lp->keyframe0.frame_control.current_frame,
-                             (unsigned)(u8)lp->item_kind, 0u, 0u, 0u);
+    /* 0. Our slot must be the save block our character lives in (see
+     *    acnet_claim_slot_t). The block is only known once we are in town. */
+    if (Puppet_in_town(play)) {
+        pc_net_set_player_no(Common_Get(player_no));
+    }
+
+    /* 1. Broadcast our own state: where we are, and exactly what our body
+     *    is doing, so our puppet in the others' games plays the same thing. */
+    if (Puppet_in_town(play)) {
+        acnet_player_state_t st;
+        memset(&st, 0, sizeof(st));
+        st.x = player_actor->world.position.x;
+        st.y = player_actor->world.position.y;
+        st.z = player_actor->world.position.z;
+        st.angle_y = (int16_t)player_actor->shape_info.rotation.y;
+        st.anim0_idx = (int16_t)lp->animation0_idx;
+        st.anim1_idx = (int16_t)lp->animation1_idx;
+        st.part_table_idx = (int8_t)lp->part_table_idx;
+        st.anim0_frame = lp->keyframe0.frame_control.current_frame;
+        st.anim1_frame = lp->keyframe1.frame_control.current_frame;
+        st.anim_speed = lp->keyframe0.frame_control.speed;
+        st.item = (uint16_t)(u8)lp->item_kind;
+        st.flags = Common_Get(player_bee_swell_flag) ? ACNET_STATE_FLAG_BEE_SWELL : 0;
+        pc_net_send_player_state(&st);
+    }
 
     /* 1b. Take any other resident's freshly saved character and house into
      *     our running town. Those blocks are theirs alone, so overwriting
      *     them in place is safe: every pointer into the save stays valid,
      *     only the contents change, and it happens here between the game's
-     *     own reads rather than from the network pump. */
+     *     own reads rather than from the network pump. Their puppet's look
+     *     is rebuilt from the new block on its next update. */
     for (slot = 0; slot < 4; slot++) {
         if (slot == local_slot) {
             continue;
@@ -247,6 +558,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
                                         Save_GetPointer(homes[slot]), sizeof(mHm_hs_c))) {
             pc_save_bswap_private(Save_GetPointer(private_data[slot]), PC_BSWAP_FROM_BE);
             pc_save_bswap_home(Save_GetPointer(homes[slot]), PC_BSWAP_FROM_BE);
+            s_look[slot].valid = 0;
             OSReport("[puppet] resident %d's new character and house are now in this town\n", slot);
         }
     }
@@ -259,24 +571,27 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     }
 
     /* 2. Update existing puppets from network state, deleting those whose
-     *    resident has gone. Capture next_actor before any delete. */
+     *    resident has gone (or whose body no longer matches their block).
+     *    Capture next_actor before any delete. */
     {
         ACTOR* a = play->actor_info.list[PUPPET_ACTOR_PART].actor;
         while (a != NULL) {
             ACTOR* next = a->next_actor;
             if (a->id == PUPPET_PROFILE_ID) {
-                float x, y, z, frame;
-                int ang;
-                unsigned anim, item, emote, area;
-                if (pc_net_get_remote_fields(a->actor_specific, &x, &y, &z, &ang, &anim, &frame,
-                                             &item, &emote, &area)) {
-                    a->world.position.x = x;
-                    a->world.position.y = y;
-                    a->world.position.z = z;
-                    a->shape_info.rotation.y = (s16)ang;
-                } else {
-                    OSReport("[puppet] resident %d left; removing puppet\n", (int)a->actor_specific);
+                acnet_player_state_t st;
+                int s = a->actor_specific;
+                if (!pc_net_get_remote_state(s, &st)) {
+                    OSReport("[puppet] resident %d left; removing puppet\n", s);
                     Actor_info_delete(&play->actor_info, a, game);
+                } else if (Puppet_slot_has_resident(s) && Puppet_gender(s) != s_anim[s].built_gender) {
+                    OSReport("[puppet] resident %d's character changed body; rebuilding puppet\n", s);
+                    Actor_info_delete(&play->actor_info, a, game);
+                } else {
+                    a->world.position.x = st.x;
+                    a->world.position.y = st.y;
+                    a->world.position.z = st.z;
+                    a->shape_info.rotation.y = (s16)st.angle_y;
+                    Puppet_look_refresh(s, (st.flags & ACNET_STATE_FLAG_BEE_SWELL) != 0);
                 }
             }
             a = next;
@@ -285,22 +600,21 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
 
     /* 3. Spawn a puppet for any present resident that does not have one. */
     for (slot = 0; slot < 4; slot++) {
-        float x, y, z, frame;
-        int ang;
-        unsigned anim, item, emote, area;
+        acnet_player_state_t st;
         if (slot == local_slot) {
             continue;
         }
-        if (!pc_net_get_remote_fields(slot, &x, &y, &z, &ang, &anim, &frame, &item, &emote, &area)) {
+        if (!pc_net_get_remote_state(slot, &st)) {
             continue;
         }
         if (Puppet_find(play, slot) != NULL) {
             continue;
         }
+        Puppet_look_refresh(slot, (st.flags & ACNET_STATE_FLAG_BEE_SWELL) != 0);
         {
-            ACTOR* made = Actor_info_make_actor(&play->actor_info, game, mAc_PROFILE_PUPPET, x, y, z, 0,
-                                                (s16)ang, 0, -1, -1, -1, EMPTY_NO, (s16)slot, -1, -1);
-            OSReport("[puppet] resident %d appeared at %.0f,%.0f,%.0f: %s\n", slot, x, y, z,
+            ACTOR* made = Actor_info_make_actor(&play->actor_info, game, mAc_PROFILE_PUPPET, st.x, st.y, st.z, 0,
+                                                (s16)st.angle_y, 0, -1, -1, -1, EMPTY_NO, (s16)slot, -1, -1);
+            OSReport("[puppet] resident %d appeared at %.0f,%.0f,%.0f: %s\n", slot, st.x, st.y, st.z,
                      made ? "puppet created" : "FAILED to create puppet actor");
         }
     }

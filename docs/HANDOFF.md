@@ -4,12 +4,14 @@ Written at the end of the first long build-and-playtest session and updated sinc
 fresh session can pick up without re-deriving anything. `CLAUDE.md` has the standing
 rules; this file has the situation. `docs/MULTIPLAYER.md` has the design reasoning.
 
-**Last updated 2026-09-15 (early morning), the first session on the user's own PC.** The
-puppet crash below is fixed, built, and **confirmed on the real game here**: a scratch copy
-of the game was driven to the field and a fake second resident was logged in with the CLI;
-the puppet was created, drawn, kept for 30+ s, removed when she left and re-created when
-she returned, with the game alive throughout (see "Playtesting without a friend"). The
-build is in the user's game folder; the friend needs the same `AnimalCrossing.exe`.
+**Last updated 2026-09-15 (evening), the first session on the user's own PC.** Three
+things landed today, all confirmed on the real game here (see "Playtesting without a
+friend"): the puppet no longer crashes the game; it now stands, walks and animates
+exactly as the other resident's game does; and it is dressed as *that* resident (body,
+face, shirt) from their own save block. Along the way a design bug in the resident slots
+was found in the user's real data and fixed (below). The build is in the user's game
+folder; **both players need the new `AnimalCrossing.exe` and `AnimalCrossingOnline.exe`**
+(protocol version 2; old copies are refused by the new server).
 
 ## Where things actually stand
 
@@ -28,9 +30,10 @@ Two people on two PCs, in different houses, have played in the same town. That m
 
 **Built but never seen working**
 
-- **Seeing each other.** Crashed the game until 2026-09-14; fixed, and confirmed with a
-  fake second resident on 2026-09-15 (below). Not yet seen with two real people, and the
-  puppet is still an unanimated body in the local player's clothes.
+- **Seeing each other.** Crashed the game until 2026-09-14; fixed. On 2026-09-15 the
+  puppet gained real animation (the sender's own keyframe state) and its own resident's
+  look (model, face, shirt from their save block), both confirmed with a manufactured
+  second resident. Not yet seen with two real people.
 - **Live resident sync** — when a resident saves, their character and house are pushed to
   everyone else's *running* game. Shipped to the user, never confirmed, because the crash
   below got in the way.
@@ -38,8 +41,8 @@ Two people on two PCs, in different houses, have played in the same town. That m
   frame, relayed, and written into the stored town. Server side is covered by the e2e
   suite. It is in the user's current build but unconfirmed in play.
 
-**Not started:** chat through the game's text entry, the shared town clock, giving each
-puppet the right face/outfit, and more than four residents.
+**Not started:** chat through the game's text entry, the shared town clock, puppet
+collision and held items, and more than four residents.
 
 ## The puppet crash: fixed 2026-09-14, awaiting a playtest
 
@@ -109,13 +112,32 @@ texture-bank and animal-info code on the puppet, which they had been doing with
 she came back. No crash. Both players still need the new `AnimalCrossing.exe` — the crash
 was in whichever game *draws* the other person.
 
-**Still true after the fix:** the puppet is drawn with whatever is in its never-computed
-`work_mtx`, so it appears as a stiff body at an odd angle rather than standing (the
-player's move proc is what plays the keyframe animation and builds those matrices — the
-puppet's does nothing yet). It wears the local player's outfit and face (one texture
-bank) and has no collision, so villagers walk through it. Next iterations of step 2, in
-order: play the wait/walk animation on the puppet's skeleton from the streamed
-`anim_index`/`frame` so it stands and walks; then per-puppet textures.
+**Animation and look (2026-09-15).** The state packet now carries the sender's
+`animation0_idx`, `animation1_idx`, `part_table_idx`, both current frames and the speed;
+the puppet's move proc starts the same animations (with a short morph on change) and runs
+`cKF_SkeletonInfo_R_combine_play` every frame, snapping to the sender's frame only when
+more than two frames adrift, so 30 Hz samples do not stutter a 60 fps puppet. Eyes and
+mouth follow the animation's texture tables or blink normally. The look comes from the
+resident's own `Private_c` (`Puppet_look_refresh` in `m_puppet.c_inc`, helpers
+`mPlib_*_for` in `m_player_lib.c`): boy/girl skeleton by gender, the 14 eye/mouth
+textures + face palette by face/sunburn/bee-sting, shirt texture + palette by
+`cloth.idx` (built-in from the disc, or one of their own designs from the block). Each
+puppet keeps its own ~3.6 KB copy, rebuilt when the block changes (live resident sync
+clears it) and the puppet is rebuilt if the gender changes. Still missing: collision
+(villagers walk through it), held items, hats/accessories drawn by the player's per-joint
+callbacks.
+
+**The resident-slot bug (found and fixed 2026-09-15).** The server assigned slots by
+login order while the game keeps characters by save-block index, and they had drifted in
+the user's real data (`residents.txt`: `0 Alana / 1 Owen`, but Owen's character in block
+0). Consequences would have been Alana's puppet dressed as Owen and her saved character
+wiped by the splice. Fix: `ACNET_MSG_CLAIM_SLOT` — once in town, the game reports
+`Common_Get(player_no)` (gated on the scene: the title demo sets `player_no` to 0), the
+server moves the resident to that slot, swapping with a slot-holder who has never saved
+and refusing a block that holds someone else's saved character, and announces the move as
+PEER_LEFT/PEER_JOINED. Confirmed on the real data: Owen logged in as resident 1, claimed
+block 0, the server swapped him with Alana, and `residents.txt` became `0 Owen / 1 Alana`.
+e2e check 17 covers it.
 
 ## Things that already bit us
 
@@ -204,10 +226,24 @@ in-game side. The recipe that confirmed the puppet fix:
    prints `STATE ... pos=x,y,z`; then
    `acnet_cli ... --name Alana --state x+60,y,z+20 --state-every 200 --wait 150`
    keeps her there (the game forgets a resident after 3 s of silence; `--state-every`
-   exists for this). Watch `aclog.txt` for the `[puppet]` lines and take a `shot`.
-   Killing the CLI is the "friend left" test; running it again is "friend came back".
-6. Kill the game, the server and any `acnet_cli` afterwards (`Get-Process` by name; the
+   exists for this; `--anim N` picks the pose, frame 1 held). Watch `aclog.txt` for the
+   `[puppet]` lines and take a `shot`. Killing the CLI is the "friend left" test; running
+   it again is "friend came back".
+6. **Give her a character** so the look path is exercised (a slot with no character falls
+   back to the local player's textures): with the fake Alana *offline* (the server refuses
+   an upload from a name that is connected),
+   `python3 server/test/make_resident.py <serverdata>/towns/3hwybg/town.gci alana.gci 0 1 Alana girl 3 50`
+   copies Owen's block 0 into block 1 as a girl with face 3 and shirt 50, then
+   `acnet_cli ... --name Alana --upload alana.gci --reason save`. Owen's running game logs
+   `resident 1 saved ... taking their character`, and the next fake Alana spawns with
+   `[puppet] resident 1 looks like: girl, face 3, shirt 50` and `building girl body`.
+   Run `make_resident.py` with MSYS2's python and give it the script path in `/c/...`
+   form; its data arguments can be Windows paths.
+7. Kill the game, the server and any `acnet_cli` afterwards (`Get-Process` by name; the
    server's command line shows the `--data` path so you never kill the user's own).
+8. Editing source from this session: write the edit as a Python file with the Write tool
+   and run it with `D:/msys64/usr/bin/python3.exe /c/...`. A bash heredoc mangled a
+   `'\0'` into a real NUL byte once, and the files mix CRLF and LF.
 
 ## Testing the launcher headlessly (Linux)
 

@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 1
+#define ACNET_PROTOCOL_VERSION 2 /* 2: player state carries the full animation state */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
@@ -45,6 +45,8 @@
 #define ACNET_SAVE_CHECKSUM_OFFSET 0x12          /* mFRm_chk_t.checksum inside Save_t */
 #define ACNET_PRIVATE_ARRAY_OFFSET 0x20          /* Save_t.private_data[PLAYER_NUM] */
 #define ACNET_PRIVATE_SIZE         0x2440        /* sizeof(Private_c) */
+#define ACNET_PRIVATE_ID_OFFSET    0x10          /* PersonalID_c.player_id, land_id (u16 BE each) inside
+                                                  * Private_c; both 0xFFFF = no character in this block */
 #define ACNET_HOME_ARRAY_OFFSET    0x9CE8        /* Save_t.homes[PLAYER_NUM] */
 #define ACNET_HOME_SIZE            0x26B0        /* sizeof(mHm_hs_c) */
 
@@ -88,7 +90,9 @@ enum acnet_msg {
     ACNET_MSG_STATUS_REQUEST = 16,/* C->S  acnet_status_request_t (pre-login, claims nothing) */
     ACNET_MSG_STATUS_REPLY   = 17,/* S->C  acnet_status_reply_t */
     ACNET_MSG_RESIDENT_DATA  = 18,/* S->C  acnet_resident_data_t + ACNET_RESIDENT_BLOB_SIZE bytes */
-    ACNET_MSG_LAND_CELLS     = 19 /* C->S->C acnet_land_hdr_t + count * acnet_land_cell_t */
+    ACNET_MSG_LAND_CELLS     = 19,/* C->S->C acnet_land_hdr_t + count * acnet_land_cell_t */
+    ACNET_MSG_CLAIM_SLOT     = 20,/* C->S  acnet_claim_slot_t: "my character is in save block N" */
+    ACNET_MSG_SLOT           = 21 /* S->C  acnet_slot_t: your slot is now N */
 };
 
 enum acnet_reject_reason {
@@ -181,6 +185,31 @@ typedef struct ACNET_PACKED {
     uint8_t client_id;
 } acnet_authority_t;
 
+/* A resident's slot IS the index of the save block their character lives
+ * in: the server protects blocks, relays saves and the game dresses puppets
+ * by that index. The server cannot know the block at login (it hands out
+ * slots by name), and the game only knows it once the resident has been
+ * picked on the player-select screen, so the game tells the server then.
+ * The server moves the resident to that slot, swapping with a slot-holder
+ * who has never saved, or refuses if that block belongs to a resident who
+ * has. Everyone else is told with PEER_LEFT (old slot) + PEER_JOINED (new). */
+typedef struct ACNET_PACKED {
+    uint8_t player_no;    /* 0..3: the Save_t.private_data index in use */
+    uint8_t reserved[3];
+} acnet_claim_slot_t;
+
+enum acnet_slot_reason {
+    ACNET_SLOT_ACCEPTED = 1, /* your claim: slot == player_no now */
+    ACNET_SLOT_REFUSED  = 2, /* your claim: that block is someone else's saved character */
+    ACNET_SLOT_MOVED    = 3  /* another resident's claim moved you to this slot */
+};
+
+typedef struct ACNET_PACKED {
+    uint8_t slot;         /* the resident's slot now */
+    uint8_t reason;       /* enum acnet_slot_reason */
+    uint8_t reserved[2];
+} acnet_slot_t;
+
 typedef struct ACNET_PACKED {
     uint32_t nonce;
 } acnet_ping_t;
@@ -260,12 +289,28 @@ typedef struct ACNET_PACKED {
     uint32_t area;
     float    x, y, z;
     int16_t  angle_y;
-    uint16_t anim_index;
-    float    anim_frame;
+    /* The sender's animation state, verbatim, so a puppet plays exactly what
+     * that player is playing: the two keyframe animations the player layers
+     * (body, and the arm/item layer), the part table saying which joints
+     * take the second, their current frames and the playback speed. The
+     * indices are the player's own animation table (mPlayer_ANIM_*). */
+    int16_t  anim0_idx;
+    int16_t  anim1_idx;
+    int8_t   part_table_idx;
+    uint8_t  flags;           /* ACNET_STATE_FLAG_* */
+    float    anim0_frame;
+    float    anim1_frame;
+    float    anim_speed;
     uint16_t item;
     uint8_t  emote;
-    uint8_t  flags;
+    uint8_t  reserved;
 } acnet_player_state_t;
+
+#define ACNET_STATE_FLAG_BEE_SWELL 0x01 /* face swollen by a bee sting; live state, not in the save */
+
+/* The player's standing-still animation (mPlayer_ANIM_WAIT1), for tools that
+ * have no game headers. m_puppet.c_inc checks the value at compile time. */
+#define ACNET_PLAYER_ANIM_WAIT 0
 
 #define ACNET_MAX_PAYLOAD (sizeof(acnet_hdr_t) + sizeof(acnet_welcome_t))
 

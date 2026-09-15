@@ -1297,6 +1297,72 @@ extern void mPlib_change_player_face(GAME* game) {
     mPlib_change_player_face_pallet(game);
 }
 
+#ifdef TARGET_PC
+/* Multiplayer fork: the same lookups for a resident who is NOT the local
+ * player, taking that resident's own save block instead of Now_Private, so
+ * a puppet can be given their model, face, skin and shirt. Mirrors the
+ * static functions above; keep them in step. */
+extern cKF_Skeleton_R_c cKF_bs_r_boy_1;
+extern cKF_Skeleton_R_c cKF_bs_r_grl_1;
+
+extern cKF_Skeleton_R_c* mPlib_get_player_mdl_p_for(int gender) {
+    return gender == mPr_SEX_FEMALE ? &cKF_bs_r_grl_1 : &cKF_bs_r_boy_1;
+}
+
+extern u32 mPlib_Get_FaceTexRom_p_for(const Private_c* priv, int swell) {
+    return mPlib_Get_UseFaceTexRom_p_common(priv->gender, priv->face, swell, FALSE);
+}
+
+extern u32 mPlib_Get_FacePalletRom_p_for(const Private_c* priv, int swell) {
+    int sunburn_rank = priv->sunburn.rank;
+
+    if (sunburn_rank > 0) {
+        u32 idx = mPlib_Get_UseFaceRom_index(priv->gender, priv->face, swell, FALSE, mPlayer_USE_FACE_ROM_TYPE_PAL);
+        u32 base = mPlib_Get_UseFaceTexRom_p_common(mPr_SEX_FEMALE, mPr_FACE_TYPE7, TRUE, TRUE);
+
+        return base + 0xE00 + (sunburn_rank + idx) * 0x20;
+    }
+
+    return mPlib_Get_FaceTexRom_p_for(priv, swell) + 0xE00;
+}
+
+/* Shirt texture and palette: a built-in design lives on the disc (*in_aram),
+ * one of the resident's own designs lives in their save block. */
+extern u32 mPlib_Get_PlayerTexRom_p_for(const Private_c* priv, int* in_aram) {
+    int idx = priv->cloth.idx;
+
+    *in_aram = mPlib_Check_PlayerClothInAram(idx);
+    if (*in_aram) {
+        return JW_GetAramAddress(RESOURCE_TEX_BOY) + idx * mNW_DESIGN_TEX_SIZE;
+    } else {
+        int org_idx = idx - (CLOTH_NUM + 1);
+
+        if (!mPr_ORIGINAL_DESIGN_IDX_VALID(org_idx)) {
+            org_idx = 0;
+        }
+
+        return (u32)priv->my_org[org_idx & 7].design.data;
+    }
+}
+
+extern u32 mPlib_Get_PlayerPalletRom_p_for(const Private_c* priv, int* in_aram) {
+    int idx = priv->cloth.idx;
+
+    *in_aram = mPlib_Check_PlayerClothInAram(idx);
+    if (*in_aram) {
+        return JW_GetAramAddress(RESOURCE_PALLET_BOY) + idx * mNW_PALETTE_SIZE;
+    } else {
+        int org_idx = idx - (CLOTH_NUM + 1);
+
+        if (!mPr_ORIGINAL_DESIGN_IDX_VALID(org_idx)) {
+            org_idx = 0;
+        }
+
+        return (u32)mNW_PaletteIdx2Palette(priv->my_org[org_idx & 7].palette);
+    }
+}
+#endif /* TARGET_PC */
+
 extern PLAYER_ACTOR* get_player_actor_withoutCheck(GAME_PLAY* play) {
     return (PLAYER_ACTOR*)&play->actor_info.list[ACTOR_PART_PLAYER].actor[0];
 }

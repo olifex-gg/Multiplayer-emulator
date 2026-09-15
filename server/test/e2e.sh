@@ -169,4 +169,32 @@ sys.exit(0 if v == 4660 else 1)
 PYEOF
 $MK check "$TMP/data/towns/$INVITE/town.gci" | grep -q "^OK" || fail "stored town checksum broken after land flush"
 
+echo "16. a player-state packet reaches the others with its animation state intact"
+cli --name alice --wait 3 > "$TMP/alice_state.txt" &
+SAPID=$!
+sleep 0.7
+cli --name bob --state 1,2,3 --anim 5 --wait 1
+wait "$SAPID" || true
+grep -q "STATE .* pos=1.0,2.0,3.0 anim=5/5 part=0 frame=1.0/1.0 speed=0.00 flags=0" "$TMP/alice_state.txt" || fail "alice got no usable state: $(cat "$TMP/alice_state.txt")"
+
+echo "17. a resident's slot follows the save block their character lives in"
+# bob is resident 1; carol holds 2 but has never saved, so bob's claim swaps them.
+cli --name alice --wait 3 > "$TMP/alice_slot.txt" &
+CLPID=$!
+sleep 0.7
+out=$(cli --name bob --claim 2)
+grep -q "SLOT slot=2 reason=1" <<<"$out" || fail "bob's claim: $out"
+out=$(cli --status)
+grep -q "^SLOT 2 bob" <<<"$out" || fail "bob should now own slot 2: $out"
+grep -q "^SLOT 1 carol" <<<"$out" || fail "carol should have taken slot 1: $out"
+wait "$CLPID" || true
+grep -q "LEFT client_id=[0-9]* slot=1 name=bob" "$TMP/alice_slot.txt" || fail "alice saw no LEFT for bob's old slot: $(cat "$TMP/alice_slot.txt")"
+grep -q "JOIN client_id=[0-9]* slot=2 name=bob" "$TMP/alice_slot.txt" || fail "alice saw no JOIN for bob's new slot: $(cat "$TMP/alice_slot.txt")"
+# alice has saved into block 0, so nobody can take it.
+out=$(cli --name bob --claim 0)
+grep -q "SLOT slot=2 reason=2" <<<"$out" || fail "a saved character's block must not be taken: $out"
+# The next login keeps the corrected slot, and bob's uploads now protect block 2.
+out=$(cli --name bob); grep -q "slot=2" <<<"$out" || fail "bob's slot did not persist: $out"
+$MK check "$TMP/data/towns/$INVITE/town.gci" | grep -q "^OK" || fail "town broken after slot move"
+
 echo "ALL PASSED"

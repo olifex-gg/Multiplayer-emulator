@@ -124,3 +124,13 @@ These each cost a debugging cycle. Do not regress them.
 6. **Offsets live in `net/protocol.h`** and are verified against the real structs with
    `offsetof`. If you change anything about the save layout, re-derive them; do not trust
    the comments.
+7. **A resident's slot IS the save block their character lives in.** The server hands out
+   slots by login name, the game stores characters by `Save_t.private_data` index, and the
+   two drifted apart in the user's real town (Owen listed as resident 1 with his character
+   in block 0). Every protection, relay and puppet lookup keys on that index, so the game
+   tells the server its `player_no` as soon as it is in town (`ACNET_MSG_CLAIM_SLOT`) and
+   the server moves the resident. Never add a path that assumes login order.
+8. **Edit files with a Python script written by the Write tool, not a bash heredoc.** On
+   this machine a heredoc turned `'\0'` into a literal NUL byte inside a C source file
+   (the compiler accepted it, silently). The repo mixes CRLF and LF files, so the script
+   must preserve each file's line endings.

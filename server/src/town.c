@@ -223,6 +223,13 @@ void town_close(town_t* t) {
     t->data = NULL;
 }
 
+int town_block_has_character(const town_t* t, int i) {
+    const uint8_t* id;
+    if (!t->data || i < 0 || i >= ACNET_MAX_PLAYERS) return 0;
+    id = t->data + ACNET_PRIVATE_OFFSET(i) + ACNET_PRIVATE_ID_OFFSET;
+    return !(id[0] == 0xFF && id[1] == 0xFF && id[2] == 0xFF && id[3] == 0xFF);
+}
+
 int town_assign_slot(town_t* t, const char* name, int want_slot) {
     int i;
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
@@ -231,10 +238,20 @@ int town_assign_slot(town_t* t, const char* name, int want_slot) {
     if (want_slot >= 0 && want_slot < ACNET_MAX_PLAYERS && t->slot_owner[want_slot][0] == '\0') {
         i = want_slot;
     } else if (want_slot == ACNET_SLOT_ANY) {
+        /* A new resident's game will put their character in the first block
+         * of the downloaded town that has no character in it, so guess that
+         * block; the claim that follows corrects the guess if it was wrong. */
         for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
-            if (t->slot_owner[i][0] == '\0') break;
+            if (t->slot_owner[i][0] == '\0' && !town_block_has_character(t, i)) break;
         }
-        if (i == ACNET_MAX_PLAYERS) return -1;
+        if (i == ACNET_MAX_PLAYERS) {
+            /* Every empty block is spoken for; fall back to any unowned slot
+             * (the claim will sort it out, or the game will report a full town). */
+            for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+                if (t->slot_owner[i][0] == '\0') break;
+            }
+            if (i == ACNET_MAX_PLAYERS) return -1;
+        }
     } else {
         return -1;
     }
@@ -242,6 +259,26 @@ int town_assign_slot(town_t* t, const char* name, int want_slot) {
     t->slot_uploaded[i] = 0;
     save_residents(t);
     return i;
+}
+
+int town_move_resident(town_t* t, const char* name, int from, int to, char* displaced) {
+    uint8_t uploaded;
+    displaced[0] = '\0';
+    if (from < 0 || from >= ACNET_MAX_PLAYERS || to < 0 || to >= ACNET_MAX_PLAYERS) return 0;
+    if (strcmp(t->slot_owner[from], name) != 0) return 0;
+    if (from == to) return 1;
+    if (t->slot_owner[to][0] && t->slot_uploaded[to]) return 0; /* a saved character lives there */
+
+    /* Whoever held `to` never saved into it, so it costs them nothing to
+     * take the slot the claimant is leaving. */
+    snprintf(displaced, ACNET_NAME_LEN + 1, "%s", t->slot_owner[to]);
+    uploaded = t->slot_uploaded[from];
+    snprintf(t->slot_owner[to], sizeof(t->slot_owner[to]), "%s", name);
+    t->slot_uploaded[to] = uploaded;
+    snprintf(t->slot_owner[from], sizeof(t->slot_owner[from]), "%s", displaced);
+    t->slot_uploaded[from] = 0;
+    save_residents(t);
+    return 1;
 }
 
 int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item) {

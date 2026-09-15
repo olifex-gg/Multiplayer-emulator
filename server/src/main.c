@@ -510,6 +510,62 @@ static void land_flush_tick(int force) {
     }
 }
 
+/* Tell everyone in the room that `c` now sits in a different slot. */
+static void announce_slot_change(client_t* c, int old_slot) {
+    acnet_peer_t p;
+    memset(&p, 0, sizeof(p));
+    p.client_id = (uint8_t)c->id;
+    memcpy(p.name, c->name, ACNET_NAME_LEN);
+    p.slot = (uint8_t)old_slot;
+    room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_PEER_LEFT, &p, sizeof(p), 1);
+    p.slot = (uint8_t)c->slot;
+    room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_PEER_JOINED, &p, sizeof(p), 1);
+}
+
+/* The game says which save block its character lives in; make that the
+ * resident's slot (see acnet_claim_slot_t in protocol.h). */
+static void handle_claim_slot(client_t* c, const uint8_t* payload, size_t len) {
+    acnet_claim_slot_t q;
+    acnet_slot_t r;
+    room_t* room;
+    if (!c->logged_in || len != sizeof(q)) return;
+    memcpy(&q, payload, sizeof(q));
+    room = &g_rooms[c->room];
+    memset(&r, 0, sizeof(r));
+    r.reason = ACNET_SLOT_ACCEPTED;
+    if (q.player_no < ACNET_MAX_PLAYERS && (int)q.player_no != c->slot) {
+        char displaced[ACNET_NAME_LEN + 1];
+        int old = c->slot;
+        if (town_move_resident(&room->town, c->name, old, (int)q.player_no, displaced)) {
+            int i;
+            c->slot = (int)q.player_no;
+            logf_("[%s] %s's character lives in save block %d, moved from resident %d%s%s", room->town.invite,
+                  c->name, c->slot, old, displaced[0] ? "; displaced " : "", displaced);
+            announce_slot_change(c, old);
+            if (displaced[0]) {
+                for (i = 0; i < ACNET_MAX_CLIENTS; i++) {
+                    client_t* o = &g_clients[i];
+                    acnet_slot_t moved;
+                    if (!o->in_use || !o->logged_in || o->room != c->room || strcmp(o->name, displaced) != 0) continue;
+                    o->slot = old;
+                    memset(&moved, 0, sizeof(moved));
+                    moved.slot = (uint8_t)old;
+                    moved.reason = ACNET_SLOT_MOVED;
+                    send_msg(o->peer, ACNET_CH_CONTROL, ACNET_MSG_SLOT, &moved, sizeof(moved), NULL, 0, 1);
+                    announce_slot_change(o, c->slot);
+                }
+            }
+        } else {
+            r.reason = ACNET_SLOT_REFUSED;
+            logf_("[%s] REFUSED: %s says their character is in save block %u, but that block belongs to %s who has saved",
+                  room->town.invite, c->name, q.player_no,
+                  room->town.slot_owner[q.player_no < ACNET_MAX_PLAYERS ? q.player_no : 0]);
+        }
+    }
+    r.slot = (uint8_t)c->slot;
+    send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_SLOT, &r, sizeof(r), NULL, 0, 1);
+}
+
 static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     acnet_ping_t p;
     acnet_pong_t r;
@@ -593,6 +649,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_PING:         handle_ping(c, payload, payload_len); break;
     case ACNET_MSG_STATUS_REQUEST: handle_status_request(c, payload, payload_len); break;
     case ACNET_MSG_LAND_CELLS:   handle_land_cells(c, payload, payload_len); break;
+    case ACNET_MSG_CLAIM_SLOT:   handle_claim_slot(c, payload, payload_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;

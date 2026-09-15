@@ -116,7 +116,11 @@ can splice per-resident data by offset without understanding the game.
 
 - **Your resident block is yours.** Each client is authoritative for its own
   `private_data` slot and house. The server always splices the latest copy from that
-  client into the stored town.
+  client into the stored town. A resident's *slot* is defined as the index of the save
+  block their character occupies: the server's first guess at login (by name, then the
+  first block with no character) is corrected by the game itself as soon as the resident
+  is in town (`ACNET_MSG_CLAIM_SLOT`), swapping with a slot-holder who has never saved and
+  refusing to take a block that holds someone else's saved character.
 - **Land data converges two ways.** Player actions that change the town (pick up, drop,
   shake, dig, plant, bury, mail, gate, furniture) are events the server orders and
   broadcasts, so everyone sees them immediately. Everything else (villager walks, weeds,
@@ -229,12 +233,18 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   `ACTOR_PART_UNUSED`, the one actor part nothing in the game claims: the player part
   would make `GET_PLAYER_ACTOR_NOW()` return it, and the NPC part crashed the game because
   villager code casts every entry of that list to `NPC_ACTOR*` (see `docs/HANDOFF.md`).
-  It draws the skeleton directly with no per-joint callbacks, shares the local player's
-  texture bank, stands in the bind pose and has no collision — animation, outfit and
-  collision are the next iterations.
+  It draws the skeleton directly with no per-joint callbacks. It plays exactly what the
+  other resident's game is playing: the state stream carries both keyframe animation
+  indices, the part table, frames and speed, and the puppet runs the same
+  `cKF_SkeletonInfo_R_combine_play` the player does, resyncing to the sender's frame only
+  when it drifts. It is dressed from that resident's own `Private_c` block (gender picks
+  the boy/girl model; face, sunburn, bee-sting and shirt pick the textures), which every
+  client has in the shared save and live resident sync keeps current, so it looks like
+  them rather than like the local player. Still to do: collision (villagers walk through
+  it), held items, and the head-turn/footprint callbacks the real player has.
 
-What is **not** there yet: puppet animation and outfits, chat (counted but not rendered),
-the shared clock, and the acre-ownership part of convergence (step 3).
+What is **not** there yet: puppet collision and held items, chat (counted but not
+rendered), the shared clock, and the acre-ownership part of convergence (step 3).
 
 ### Not doing (and why)
 
