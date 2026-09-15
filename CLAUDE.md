@@ -1,0 +1,106 @@
+# Multiplayer Animal Crossing — project instructions
+
+Fork of the ACGC-PC-Port native PC port of the Animal Crossing (GameCube, USA `GAFE01`)
+decompilation, adding real-time online multiplayer: up to four people play as the four
+residents of **one shared town**, at the same time, over the internet.
+
+Read `docs/MULTIPLAYER.md` first — it is the design and decision record. Read
+`docs/HANDOFF.md` for the current state of play, what is broken right now, and the
+history behind decisions that look odd.
+
+Work happens on branch `claude/multiplayer-animal-crossing-emulator-3kmegf`.
+
+## Who this is for
+
+The person you are working with is not a programmer and does not use a command prompt.
+They play this with friends on Windows. That shapes everything:
+
+- **Deliver working Windows binaries**, not instructions to build. Send the `.exe`.
+- **Explain in plain language.** Name the mechanism, don't just say "fixed".
+- **They are the only playtester.** Nothing here can be verified by running the real game
+  in CI, so diagnostics that survive on their machine matter more than local certainty.
+  Every build writes `aclog.txt` (game) and `launcher.log` (launcher) next to the exe,
+  flushed per line, with a Windows crash handler recording the faulting module + offset.
+  Ask for those files rather than guessing.
+- **Never ask them for the game disc image**, and never add game assets to this repo. The
+  decompiled source is the game's code; the ROM only holds assets. No work here needs it.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/`, `include/` | the decompiled game (CC0). Engine + gameplay. |
+| `pc/` | the PC port layer (MIT): SDL2, OpenGL 3.3, save/GCI handling. |
+| `pc/src/pc_net.c` | multiplayer client: login, town download/upload, player state, land relay. |
+| `src/game/m_puppet.c_inc` | in-game side: other residents, live resident sync, land diffing. Included at the end of `src/game/m_player.c`. |
+| `net/protocol.h` | the wire protocol AND the save-layout offsets the server relies on. Single source of truth shared by client and server. |
+| `server/` | the town server (C + ENet). Never runs the game. `ctest` runs an end-to-end suite. |
+| `launcher/launcher.c` | Win32 Host/Join launcher + waiting room. All visuals drawn with GDI. |
+
+## Building
+
+**The port is 32-bit only** — JSystem casts pointers to `u32`. A 64-bit build is rejected
+by CMake on purpose.
+
+Native on Windows, from an **MSYS2 MINGW32** shell (not MINGW64):
+
+```bash
+pacman -S mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-SDL2 mingw-w64-i686-make ninja
+cmake -S pc -B pc/build32 -G Ninja && cmake --build pc/build32 -j
+cmake -S server -B server/build -G Ninja && cmake --build server/build -j
+bash launcher/build-windows.sh            # -> AnimalCrossingOnline.exe
+```
+
+The game needs `shaders/` and `rom/<disc image>` beside the exe at runtime.
+
+Linux (for compile-checking only — a 32-bit toolchain and `libsdl2-dev:i386`):
+
+```bash
+cmake -S pc -B pc/build32 -DCMAKE_TOOLCHAIN_FILE=$PWD/pc/cmake/Toolchain-linux32.cmake -G Ninja
+```
+
+Cross-compiling Windows binaries from Linux uses
+`pc/cmake/Toolchain-mingw32-cross.cmake` and needs an i686 SDL2 development package;
+pass `-DSDL2_FOUND=TRUE -DSDL2_INCLUDE_DIRS=... -DSDL2_LIBRARIES=...` since CMake's
+finder cannot see it when cross-compiling.
+
+Always compile-verify **both** Windows and Linux before shipping: the Linux build is fast
+and catches most mistakes, but only the Windows build is what the user runs.
+
+## Testing
+
+- `ctest --test-dir server/build` — the server end-to-end suite (`server/test/e2e.sh`).
+  It covers login, slot assignment, founding a town, the per-resident splice, checksum
+  repair, the four-resident limit, chat, authority migration, restart persistence, the
+  lobby status query, live resident sync and the land relay. **Add a case for every new
+  protocol message.** `server/tools/acnet_cli.c` is the scriptable client it drives.
+- The launcher can be smoke-tested headlessly under Wine with a virtual display — see
+  `docs/HANDOFF.md`. Do this before sending a launcher build; it has already caught a
+  crash that would otherwise have reached the user.
+- The game itself cannot be run here (no GPU/display, and no disc image). Reason about it
+  from the source, and lean on `aclog.txt` from the user.
+
+## Hard-won rules
+
+These each cost a debugging cycle. Do not regress them.
+
+1. **Build with SSE math** (`-msse2 -mfpmath=sse` in `pc/CMakeLists.txt`). The game relies
+   on float→`s16` conversions wrapping modulo 2^16 like the GameCube's `fctiwz`. i686 GCC
+   defaults to x87, whose 16-bit `fistp` turns out-of-range values into `0x8000` = exactly
+   180°, which made characters flip upside down for a frame. Do not "simplify" these flags.
+2. **`pc_net_service()` must actually call `enet_host_service`.** A zero timeout is a valid
+   non-blocking poll and is the only moment ENet transmits queued packets. An early return
+   there silently breaks both directions while login and saving still work.
+3. **Actor parts are types.** Gameplay code identifies actors by `actor->part` and blindly
+   casts every actor in a part's list to that part's struct (e.g.
+   `aNPC_greeting_area_check` casts every `ACTOR_PART_NPC` entry to `NPC_ACTOR*`). Never
+   put a foreign-shaped actor in a part that another subsystem scans.
+4. **Never overwrite a player's town without a copy.** Downloading the shared town replaces
+   `save/card_a/DobutsunomoriP_MURA.gci`; `pc_net.c` keeps a one-time `.before-online`
+   copy first. Keep that guarantee.
+5. **A resident's own blocks are theirs.** The server splices every other resident's
+   `Private_c` and `mHm_hs_c` back in on upload, so no client can overwrite another's
+   character or house. Any new sync path must preserve that.
+6. **Offsets live in `net/protocol.h`** and are verified against the real structs with
+   `offsetof`. If you change anything about the save layout, re-derive them; do not trust
+   the comments.
