@@ -107,4 +107,25 @@ out=$(cli --name carol --download "$TMP/dl_after.gci")
 grep -q "WELCOME client_id=[0-9]* slot=2 .*town_present=1 version=2" <<<"$out" || fail "after restart: $out"
 cmp "$TMP/dl_after.gci" "$TMP/dl_alice2.gci" || fail "town changed across restart"
 
+echo "13. lobby status query (no login, claims no slot, creates no town)"
+# Unknown invite code: reported as unknown, and no town directory is created for it.
+out=$("$CLI" --server 127.0.0.1 --port "$PORT" --invite zzzznope --status --quiet)
+grep -q "STATUS room_known=0" <<<"$out" || fail "unknown invite should be unknown: $out"
+[ ! -d "$TMP/data/towns/zzzznope" ] || fail "a status query created a town directory"
+# Known town: reports residents, marks who is connected, and does not take a slot.
+cli --name dave --wait 4 > "$TMP/dave_wait.txt" &
+DPID=$!
+sleep 0.7
+out=$(cli --status)
+grep -q "STATUS room_known=1 town_present=1" <<<"$out" || fail "known town status: $out"
+grep -q "^SLOT 3 dave online" <<<"$out" || fail "dave should show online: $out"
+grep -q "^SLOT 0 alice away" <<<"$out" || fail "alice should show away: $out"
+wait "$DPID" || true
+# After dave disconnects he still owns his slot, now away.
+out=$(cli --status)
+grep -q "^SLOT 3 dave away" <<<"$out" || fail "dave should still own his slot: $out"
+# The status queries must not have consumed a resident slot.
+out=$(cli --name erin || true)
+grep -q "REJECT reason=3" <<<"$out" || fail "town should be full after four residents: $out"
+
 echo "ALL PASSED"

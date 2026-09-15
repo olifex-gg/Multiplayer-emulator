@@ -19,6 +19,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <enet/enet.h>
+#include "protocol.h"
+
 #define IDC_HOST   1001
 #define IDC_JOIN   1002
 #define IDC_NAME   1003
@@ -28,6 +31,8 @@
 #define IDC_QUIT   1007
 #define IDC_STATUS 1008
 #define IDC_ADDRLBL 1009
+#define IDC_LB_ENTER 1010
+#define IDC_LB_BACK  1011
 
 static const char* GAME_EXE   = "AnimalCrossing.exe";
 static const char* SERVER_EXE = "acnet_server.exe";
@@ -36,6 +41,14 @@ static const char* LAUNCHER_INI = "launcher.ini";
 static const int   SERVER_PORT = 7777;
 
 static HWND g_name, g_addr, g_code, g_status, g_addrlbl, g_host, g_join;
+static HWND g_main_wnd;
+
+/* Defined with the rest of the window plumbing below; the waiting room uses it. */
+static HWND mk(const char* cls, const char* text, DWORD style, int x, int y, int w, int h,
+               HWND parent, int id);
+/* The waiting room, opened by the Play button (defined further down). */
+static void lobby_open(HWND parent, int is_host, const char* addr, const char* code,
+                       const char* name);
 static char g_dir[MAX_PATH]; /* folder the launcher (and game) live in */
 
 /* ---- small helpers ------------------------------------------------------ */
@@ -286,23 +299,325 @@ static void on_play(HWND wnd) {
             MessageBoxA(wnd, "The town server failed to start.", "Cannot host", MB_OK|MB_ICONERROR);
             return;
         }
-        local_ip(ip, sizeof(ip));
-        snprintf(msg, sizeof(msg),
-                 "You are hosting!\n\nTell your friends to open this launcher, choose \"Join\", and enter:\n\n"
-                 "    Server address:  %s\n    Invite code:     %s\n\n"
-                 "(If they are not on your home network, you may need to forward UDP port %d on your router, "
-                 "or host on an always-on server instead.)", ip, code, SERVER_PORT);
-        MessageBoxA(wnd, msg, "Hosting", MB_OK|MB_ICONINFORMATION);
+        (void)ip; (void)msg;
     }
 
     save_prefs(name, addr, code);
+    set_status("");
+    lobby_open(wnd, host, addr, code, name);
+}
 
+/* ---- waiting room ------------------------------------------------------- */
+/* A lobby the player sees before entering the town. It keeps one connection
+ * to the town server and polls it with a status request, which the server
+ * answers WITHOUT logging us in -- so sitting here claims no resident slot and
+ * disturbs nobody already playing. It exists because the game itself fails
+ * silently: a wrong address, a wrong invite code or a full town all used to
+ * end with the game quietly starting in single-player. */
+
+#define LOBBY_POLL_MS    2000
+#define LOBBY_CONNECT_MS 6000
+
+enum { LOBBY_CONNECTING = 0, LOBBY_OK, LOBBY_FAILED };
+
+typedef struct {
+    CRITICAL_SECTION cs;
+    volatile LONG    stop;
+    HWND             wnd;
+    char             host[160];
+    char             invite[ACNET_INVITE_LEN + 1];
+    int              state;
+    char             err[160];
+    int              have;
+    acnet_status_reply_t rep;
+} lobby_t;
+
+static lobby_t g_lobby;
+static HANDLE  g_lobby_thread;
+static HWND    g_lb_wnd, g_lb_conn, g_lb_slot[ACNET_MAX_PLAYERS], g_lb_town, g_lb_note, g_lb_enter;
+static int     g_lb_is_host;
+static char    g_lb_name[64], g_lb_addr[160], g_lb_code[64];
+
+static void lobby_set_state(lobby_t* L, int state, const char* err) {
+    EnterCriticalSection(&L->cs);
+    L->state = state;
+    lstrcpynA(L->err, err ? err : "", sizeof(L->err));
+    if (state != LOBBY_OK) L->have = 0;
+    LeaveCriticalSection(&L->cs);
+    if (L->wnd) PostMessageA(L->wnd, WM_APP + 1, 0, 0);
+}
+
+static void lobby_send_status(lobby_t* L, ENetPeer* peer) {
+    unsigned char buf[sizeof(acnet_hdr_t) + sizeof(acnet_status_request_t)];
+    acnet_hdr_t h;
+    acnet_status_request_t q;
+    size_t n;
+    ENetPacket* pk;
+
+    memset(&q, 0, sizeof(q));
+    n = strlen(L->invite);
+    if (n > ACNET_INVITE_LEN) n = ACNET_INVITE_LEN;
+    memcpy(q.invite, L->invite, n);
+
+    h.type        = ACNET_MSG_STATUS_REQUEST;
+    h.version     = ACNET_PROTOCOL_VERSION;
+    h.payload_len = (uint16_t)sizeof(q);
+    memcpy(buf, &h, sizeof(h));
+    memcpy(buf + sizeof(h), &q, sizeof(q));
+
+    pk = enet_packet_create(buf, sizeof(buf), ENET_PACKET_FLAG_RELIABLE);
+    if (pk && enet_peer_send(peer, ACNET_CH_CONTROL, pk) < 0) enet_packet_destroy(pk);
+}
+
+static void lobby_on_packet(lobby_t* L, const unsigned char* data, size_t len) {
+    acnet_hdr_t h;
+    if (len < sizeof(h)) return;
+    memcpy(&h, data, sizeof(h));
+    if (h.type != ACNET_MSG_STATUS_REPLY) return;
+    if (len < sizeof(h) + sizeof(acnet_status_reply_t)) return;
+    EnterCriticalSection(&L->cs);
+    memcpy(&L->rep, data + sizeof(h), sizeof(L->rep));
+    L->have = 1;
+    LeaveCriticalSection(&L->cs);
+    if (L->wnd) PostMessageA(L->wnd, WM_APP + 1, 0, 0);
+}
+
+static DWORD WINAPI lobby_worker(LPVOID arg) {
+    lobby_t*  L    = (lobby_t*)arg;
+    ENetHost* host = NULL;
+    ENetPeer* peer = NULL;
+    DWORD     connect_started = 0;
+    DWORD     last_poll = 0;
+
+    host = enet_host_create(NULL, 1, ACNET_CHANNELS, 0, 0);
+    if (!host) {
+        lobby_set_state(L, LOBBY_FAILED, "could not open a network socket");
+        return 0;
+    }
+
+    while (!L->stop) {
+        ENetEvent ev;
+        DWORD now;
+
+        if (!peer) {
+            ENetAddress addr;
+            if (enet_address_set_host(&addr, L->host) != 0) {
+                lobby_set_state(L, LOBBY_FAILED, "that server address could not be found");
+                Sleep(1500);
+                continue;
+            }
+            addr.port = (enet_uint16)SERVER_PORT;
+            peer = enet_host_connect(host, &addr, ACNET_CHANNELS, 0);
+            if (!peer) {
+                lobby_set_state(L, LOBBY_FAILED, "could not start a connection");
+                Sleep(1500);
+                continue;
+            }
+            connect_started = GetTickCount();
+            last_poll = 0;
+            lobby_set_state(L, LOBBY_CONNECTING, "");
+        }
+
+        while (enet_host_service(host, &ev, 100) > 0) {
+            if (ev.type == ENET_EVENT_TYPE_CONNECT) {
+                lobby_set_state(L, LOBBY_OK, "");
+                last_poll = 0;
+            } else if (ev.type == ENET_EVENT_TYPE_RECEIVE) {
+                lobby_on_packet(L, ev.packet->data, ev.packet->dataLength);
+                enet_packet_destroy(ev.packet);
+            } else if (ev.type == ENET_EVENT_TYPE_DISCONNECT) {
+                peer = NULL;
+                lobby_set_state(L, LOBBY_FAILED, "the server closed the connection");
+                break;
+            }
+            if (L->stop) break;
+        }
+        if (L->stop || !peer) continue;
+
+        now = GetTickCount();
+        if (L->state == LOBBY_CONNECTING && now - connect_started > LOBBY_CONNECT_MS) {
+            enet_peer_reset(peer);
+            peer = NULL;
+            lobby_set_state(L, LOBBY_FAILED,
+                            "no reply. Check the address, and that the host has clicked Host");
+            Sleep(1500);
+            continue;
+        }
+        if (L->state == LOBBY_OK && (last_poll == 0 || now - last_poll >= LOBBY_POLL_MS)) {
+            lobby_send_status(L, peer);
+            last_poll = now;
+        }
+    }
+
+    if (peer) enet_peer_disconnect_now(peer, 0);
+    enet_host_destroy(host);
+    return 0;
+}
+
+static void lobby_stop(void) {
+    if (!g_lobby_thread) return;
+    g_lobby.stop = 1;
+    WaitForSingleObject(g_lobby_thread, 3000);
+    CloseHandle(g_lobby_thread);
+    g_lobby_thread = NULL;
+}
+
+static void lobby_refresh(void) {
+    lobby_t* L = &g_lobby;
+    acnet_status_reply_t r;
+    int  state, have, i;
+    char err[160], line[320];
+
+    EnterCriticalSection(&L->cs);
+    state = L->state;
+    have  = L->have;
+    r     = L->rep;
+    lstrcpynA(err, L->err, sizeof(err));
+    LeaveCriticalSection(&L->cs);
+
+    if (state == LOBBY_OK) {
+        SetWindowTextA(g_lb_conn, "Connected to the town server.");
+    } else if (state == LOBBY_CONNECTING) {
+        SetWindowTextA(g_lb_conn, "Contacting the town server...");
+    } else {
+        snprintf(line, sizeof(line), "Not connected - %s", err[0] ? err : "no reply from the server");
+        SetWindowTextA(g_lb_conn, line);
+    }
+    EnableWindow(g_lb_enter, state == LOBBY_OK ? TRUE : FALSE);
+
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        char nm[ACNET_NAME_LEN + 1];
+        if (state == LOBBY_OK && have && r.room_known) {
+            memcpy(nm, r.slots[i].name, ACNET_NAME_LEN);
+            nm[ACNET_NAME_LEN] = '\0';
+            if (nm[0]) {
+                snprintf(line, sizeof(line), "Resident %d:   %s   %s", i + 1, nm,
+                         r.slots[i].online ? "(in town now)" : "(away)");
+            } else {
+                snprintf(line, sizeof(line), "Resident %d:   - empty -", i + 1);
+            }
+        } else if (state == LOBBY_OK && have) {
+            snprintf(line, sizeof(line), "Resident %d:   - empty -", i + 1);
+        } else {
+            snprintf(line, sizeof(line), "Resident %d:", i + 1);
+        }
+        SetWindowTextA(g_lb_slot[i], line);
+    }
+
+    if (state != LOBBY_OK || !have) {
+        SetWindowTextA(g_lb_town, "");
+    } else if (!r.room_known) {
+        SetWindowTextA(g_lb_town,
+                       "This town has not been started yet. Enter and save once to create it.");
+    } else if (!r.town_present) {
+        SetWindowTextA(g_lb_town,
+                       "Nobody has saved yet - the first person to save creates the town.");
+    } else {
+        snprintf(line, sizeof(line), "The town is ready. Everyone who enters loads the same one.");
+        SetWindowTextA(g_lb_town, line);
+    }
+}
+
+static void lobby_enter_town(HWND wnd) {
+    lobby_stop();
+    save_prefs(g_lb_name, g_lb_addr, g_lb_code);
     if (!launch(GAME_EXE, 0)) {
-        MessageBoxA(wnd, "Could not start the game.", "Error", MB_OK|MB_ICONERROR);
+        MessageBoxA(wnd, "Could not start the game.", "Error", MB_OK | MB_ICONERROR);
         return;
     }
-    set_status(host ? "Hosting and launching the game..." : "Joining and launching the game...");
     PostQuitMessage(0);
+}
+
+static LRESULT CALLBACK LobbyProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_CREATE: {
+        int y = 12, i;
+        char line[320];
+        mk("STATIC", "Waiting room", 0, 16, y, 300, 20, wnd, 0);
+        y += 24;
+        g_lb_conn = mk("STATIC", "Contacting the town server...", 0, 16, y, 420, 20, wnd, 0);
+        y += 28;
+        snprintf(line, sizeof(line), "Town \"%s\"", g_lb_code);
+        mk("STATIC", line, 0, 16, y, 420, 20, wnd, 0);
+        y += 24;
+        for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+            g_lb_slot[i] = mk("STATIC", "", 0, 28, y, 410, 20, wnd, 0);
+            y += 20;
+        }
+        y += 8;
+        g_lb_town = mk("STATIC", "", 0, 16, y, 430, 34, wnd, 0);
+        y += 40;
+        g_lb_note = mk("STATIC", "", 0, 16, y, 430, 52, wnd, 0);
+        y += 58;
+        g_lb_enter = mk("BUTTON", "Enter Town", BS_DEFPUSHBUTTON, 16, y, 130, 32, wnd, IDC_LB_ENTER);
+        mk("BUTTON", "Back", 0, 316, y, 130, 32, wnd, IDC_LB_BACK);
+        EnableWindow(g_lb_enter, FALSE);
+
+        if (g_lb_is_host) {
+            char ip[64];
+            local_ip(ip, sizeof(ip));
+            snprintf(line, sizeof(line),
+                     "Friends in your house join with:  %s\n"
+                     "Friends elsewhere need your public IP (search \"what is my IP\")\n"
+                     "and UDP port %d forwarded to this PC.", ip, SERVER_PORT);
+        } else {
+            snprintf(line, sizeof(line), "Joining %s", g_lb_addr);
+        }
+        SetWindowTextA(g_lb_note, line);
+        SetTimer(wnd, 1, 1000, NULL);
+        return 0;
+    }
+    case WM_APP + 1:
+    case WM_TIMER:
+        lobby_refresh();
+        return 0;
+    case WM_COMMAND:
+        switch (LOWORD(wp)) {
+        case IDC_LB_ENTER: lobby_enter_town(wnd); return 0;
+        case IDC_LB_BACK:
+            lobby_stop();
+            DestroyWindow(wnd);
+            g_lb_wnd = NULL;
+            ShowWindow(g_main_wnd, SW_SHOW);
+            return 0;
+        }
+        return 0;
+    case WM_CLOSE:
+        lobby_stop();
+        DestroyWindow(wnd);
+        g_lb_wnd = NULL;
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(wnd, msg, wp, lp);
+}
+
+/* Open the waiting room. addr is what the game will connect to. */
+static void lobby_open(HWND parent, int is_host, const char* addr, const char* code, const char* name) {
+    DWORD tid;
+
+    g_lb_is_host = is_host;
+    lstrcpynA(g_lb_name, name, sizeof(g_lb_name));
+    lstrcpynA(g_lb_addr, addr, sizeof(g_lb_addr));
+    lstrcpynA(g_lb_code, code, sizeof(g_lb_code));
+
+    memset(&g_lobby, 0, sizeof(g_lobby));
+    InitializeCriticalSection(&g_lobby.cs);
+    lstrcpynA(g_lobby.host, is_host ? "127.0.0.1" : addr, sizeof(g_lobby.host));
+    lstrcpynA(g_lobby.invite, code, sizeof(g_lobby.invite));
+    g_lobby.state = LOBBY_CONNECTING;
+
+    g_lb_wnd = CreateWindowA("ACOnlineLobby", "Animal Crossing Online - Waiting Room",
+                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                             CW_USEDEFAULT, CW_USEDEFAULT, 476, 400, NULL, NULL,
+                             GetModuleHandle(NULL), NULL);
+    if (!g_lb_wnd) return;
+    g_lobby.wnd = g_lb_wnd;
+    ShowWindow(parent, SW_HIDE);
+    ShowWindow(g_lb_wnd, SW_SHOW);
+    UpdateWindow(g_lb_wnd);
+
+    g_lobby_thread = CreateThread(NULL, 0, lobby_worker, &g_lobby, 0, &tid);
 }
 
 /* ---- window plumbing ---------------------------------------------------- */
@@ -366,15 +681,29 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     wc.lpszClassName = "ACOnlineLauncher";
     RegisterClassA(&wc);
 
+    wc.lpfnWndProc = LobbyProc;
+    wc.lpszClassName = "ACOnlineLobby";
+    RegisterClassA(&wc);
+
+    if (enet_initialize() != 0) {
+        MessageBoxA(NULL, "Could not start networking (enet_initialize failed).",
+                    "Animal Crossing Online", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
     wnd = CreateWindowA(wc.lpszClassName, "Animal Crossing Online",
                         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                         CW_USEDEFAULT, CW_USEDEFAULT, 476, 340, NULL, NULL, inst, NULL);
+    g_main_wnd = wnd;
     ShowWindow(wnd, show);
     UpdateWindow(wnd);
 
     while (GetMessage(&m, NULL, 0, 0) > 0) {
-        if (!IsDialogMessage(wnd, &m)) { TranslateMessage(&m); DispatchMessage(&m); }
+        HWND active = g_lb_wnd ? g_lb_wnd : wnd;
+        if (!IsDialogMessage(active, &m)) { TranslateMessage(&m); DispatchMessage(&m); }
     }
+    lobby_stop();
+    enet_deinitialize();
     WSACleanup();
     return 0;
 }

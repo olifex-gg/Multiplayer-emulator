@@ -205,6 +205,15 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   `-msse2 -mfpmath=sse` (plus `-mstackrealign` for Win32 callbacks), which converts through a
   32-bit `cvttss2si` and truncates like the console. Playtested: fixed. No game code changed.
 
+- **The launcher has a waiting room.** Before entering the town the player sees whether
+  they actually reached the server, which of the four resident slots are claimed and who is
+  connected right now, and whether the town has been founded yet. It runs on a pre-login
+  `STATUS_REQUEST` the server answers without logging anyone in, so sitting in the lobby
+  claims no resident slot and disturbs nobody playing; it also never creates a town, which
+  keeps a status poll from being a way to allocate rooms. This closes a real hole: the game
+  itself fails silently, so a wrong address, a wrong invite code or a full town all used to
+  end with the game quietly starting in single-player.
+
 What step 1 does **not** yet do: show a second character (that is step 2, the puppet actor),
 apply incoming player-state or chat (counted but not yet rendered), or converge live town
 changes (step 3). Today two people can load the same town as different residents from the

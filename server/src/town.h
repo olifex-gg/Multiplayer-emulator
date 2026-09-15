@@ -27,6 +27,10 @@ typedef struct {
  * data_root. Loads town.gci, residents.txt, town.version if present.
  * Returns 0 on success, -1 on error. */
 int town_open(town_t* t, const char* data_root, const char* invite);
+
+/* 1 when a town directory for this invite code already exists under data_root.
+ * The lobby status path uses this so a status request never creates a town. */
+int town_exists_on_disk(const char* data_root, const char* invite);
 void town_close(town_t* t);
 
 /* Resolve a resident name to a slot. An existing name gets its slot back.

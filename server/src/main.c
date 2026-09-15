@@ -170,6 +170,15 @@ static int name_ok(const char* s) {
 
 /* ----------------------------------------------------------------- rooms */
 
+/* Find an already-open room for this invite code, or -1. Never opens one. */
+static int room_find(const char* invite) {
+    int i;
+    for (i = 0; i < MAX_TOWNS; i++) {
+        if (g_rooms[i].in_use && strcmp(g_rooms[i].town.invite, invite) == 0) return i;
+    }
+    return -1;
+}
+
 static int room_find_or_open(const char* invite) {
     int i, free_idx = -1;
     for (i = 0; i < MAX_TOWNS; i++) {
@@ -440,6 +449,54 @@ static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_PONG, &r, sizeof(r), NULL, 0, 1);
 }
 
+/* ------------------------------------------------------------ lobby status
+ *
+ * Answered before (and without) login, so the launcher's waiting room can
+ * show who is in a town without claiming a resident slot, bumping anybody
+ * off, or creating a town that does not exist yet. Read-only by construction:
+ * it opens a room only for a town whose directory is already on disk. */
+static void handle_status_request(client_t* c, const void* payload, size_t len) {
+    acnet_status_request_t q;
+    acnet_status_reply_t rep;
+    char invite[ACNET_INVITE_LEN + 1];
+    int room, i, j;
+
+    if (len != sizeof(q)) return;
+    memcpy(&q, payload, sizeof(q));
+    memcpy(invite, q.invite, ACNET_INVITE_LEN);
+    invite[ACNET_INVITE_LEN] = '\0';
+
+    memset(&rep, 0, sizeof(rep));
+    rep.server_unix_ms = unix_ms();
+
+    if (!invite_chars_ok(invite) || !invite_allowed(invite)) {
+        send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_STATUS_REPLY, &rep, sizeof(rep), NULL, 0, 1);
+        return;
+    }
+
+    room = room_find(invite);
+    if (room < 0 && town_exists_on_disk(g_data_root, invite)) room = room_find_or_open(invite);
+    if (room < 0) {
+        send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_STATUS_REPLY, &rep, sizeof(rep), NULL, 0, 1);
+        return;
+    }
+
+    rep.room_known   = 1;
+    rep.town_present = g_rooms[room].town.data != NULL;
+    rep.town_version = g_rooms[room].town.version;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        snprintf(rep.slots[i].name, sizeof(rep.slots[i].name), "%s", g_rooms[room].town.slot_owner[i]);
+        for (j = 0; j < ACNET_MAX_CLIENTS; j++) {
+            client_t* o = &g_clients[j];
+            if (o->in_use && o->logged_in && o->room == room && o->slot == i) {
+                rep.slots[i].online = 1;
+                break;
+            }
+        }
+    }
+    send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_STATUS_REPLY, &rep, sizeof(rep), NULL, 0, 1);
+}
+
 static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     acnet_hdr_t hdr;
     const uint8_t* payload;
@@ -455,6 +512,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     if (sizeof(hdr) + payload_len > len) return;
     blob_len = len - sizeof(hdr) - payload_len;
 
+
     switch (hdr.type) {
     case ACNET_MSG_HELLO:        handle_hello(c, payload, payload_len); break;
     case ACNET_MSG_TOWN_REQUEST: handle_town_request(c); break;
@@ -462,6 +520,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_CHAT:         handle_chat(c, payload, payload_len); break;
     case ACNET_MSG_PLAYER_STATE: handle_player_state(c, payload, payload_len); break;
     case ACNET_MSG_PING:         handle_ping(c, payload, payload_len); break;
+    case ACNET_MSG_STATUS_REQUEST: handle_status_request(c, payload, payload_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;

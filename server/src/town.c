@@ -200,6 +200,13 @@ int town_open(town_t* t, const char* data_root, const char* invite) {
     return 0;
 }
 
+int town_exists_on_disk(const char* data_root, const char* invite) {
+    char dir[TOWN_DIR_MAX];
+    struct stat st;
+    snprintf(dir, sizeof(dir), "%s/towns/%s", data_root, invite);
+    return stat(dir, &st) == 0 && (st.st_mode & S_IFDIR) != 0;
+}
+
 void town_close(town_t* t) {
     free(t->data);
     t->data = NULL;

@@ -54,6 +54,21 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
     blob_len = pkt->dataLength - sizeof(hdr) - payload_len;
 
     switch (hdr.type) {
+    case ACNET_MSG_STATUS_REPLY: {
+        acnet_status_reply_t r;
+        int i;
+        if (payload_len != sizeof(r)) return 0;
+        memcpy(&r, payload, sizeof(r));
+        printf("STATUS room_known=%u town_present=%u version=%u\n", r.room_known, r.town_present,
+               r.town_version);
+        for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+            char nm[ACNET_NAME_LEN + 1];
+            memcpy(nm, r.slots[i].name, ACNET_NAME_LEN);
+            nm[ACNET_NAME_LEN] = '\0';
+            printf("SLOT %d %s %s\n", i, nm[0] ? nm : "-", r.slots[i].online ? "online" : "away");
+        }
+        return ACNET_MSG_STATUS_REPLY;
+    }
     case ACNET_MSG_WELCOME: {
         acnet_welcome_t w;
         int i;
@@ -208,7 +223,8 @@ static void usage(void) {
     fprintf(stderr,
             "usage: acnet_cli --server HOST --invite CODE --name NAME [--port N] [--slot N]\n"
             "                 [--download FILE] [--upload FILE] [--reason save|leave|periodic|new]\n"
-            "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n");
+            "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n"
+            "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n");
 }
 
 int main(int argc, char** argv) {
@@ -218,7 +234,7 @@ int main(int argc, char** argv) {
     const char* download = NULL;
     const char* upload = NULL;
     const char* chat = NULL;
-    int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0;
+    int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
     ENetPeer* peer;
@@ -239,6 +255,7 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--chat") == 0 && v) { chat = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
+        else if (strcmp(a, "--status") == 0) { do_status = 1; }
         else if (strcmp(a, "--quiet") == 0) { g_quiet = 1; }
         else if (strcmp(a, "--reason") == 0 && v) {
             i++;
@@ -249,7 +266,7 @@ int main(int argc, char** argv) {
             else { usage(); return 2; }
         } else { usage(); return 2; }
     }
-    if (!server || !invite || !name) {
+    if (!server || !invite || (!name && !do_status)) {
         usage();
         return 2;
     }
@@ -269,6 +286,16 @@ int main(int argc, char** argv) {
         return 3;
     }
     if (!g_quiet) printf("CONNECTED\n");
+
+    if (do_status) {
+        acnet_status_request_t q;
+        memset(&q, 0, sizeof(q));
+        snprintf(q.invite, sizeof(q.invite), "%s", invite);
+        send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_STATUS_REQUEST, &q, sizeof(q), NULL, 0, 1);
+        rc = wait_for(host, peer, ACNET_MSG_STATUS_REPLY, 5000, NULL);
+        exit_code = rc == ACNET_MSG_STATUS_REPLY ? 0 : 3;
+        goto done;
+    }
 
     {
         acnet_hello_t h;

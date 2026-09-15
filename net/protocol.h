@@ -69,7 +69,9 @@ enum acnet_msg {
     ACNET_MSG_PONG          = 12, /* S->C  acnet_pong_t */
     ACNET_MSG_CHAT          = 13, /* C->S->C acnet_chat_t */
     ACNET_MSG_PLAYER_STATE  = 14, /* C->S->C acnet_player_state_t (channel 1) */
-    ACNET_MSG_TOWN_VERSION  = 15  /* S->C  acnet_town_ack_t: someone else's upload landed */
+    ACNET_MSG_TOWN_VERSION  = 15, /* S->C  acnet_town_ack_t: someone else's upload landed */
+    ACNET_MSG_STATUS_REQUEST = 16,/* C->S  acnet_status_request_t (pre-login, claims nothing) */
+    ACNET_MSG_STATUS_REPLY   = 17 /* S->C  acnet_status_reply_t */
 };
 
 enum acnet_reject_reason {
@@ -176,6 +178,28 @@ typedef struct ACNET_PACKED {
     uint8_t len;
     char    text[ACNET_CHAT_LEN];
 } acnet_chat_t;
+
+/* Lobby status (launcher). A status request is answered without logging in,
+ * so the launcher can show who is in a town without claiming a resident slot
+ * or disturbing the players already connected. It never creates a town. */
+typedef struct ACNET_PACKED {
+    char invite[ACNET_INVITE_LEN];
+} acnet_status_request_t;
+
+typedef struct ACNET_PACKED {
+    char    name[ACNET_NAME_LEN]; /* "" = slot free */
+    uint8_t online;               /* 1 = that resident is connected right now */
+    uint8_t reserved[3];
+} acnet_slot_info_t;
+
+typedef struct ACNET_PACKED {
+    uint8_t  room_known;   /* 0 = no such town on this server (yet) */
+    uint8_t  town_present; /* 1 = a save has been uploaded; 0 = nobody has saved yet */
+    uint8_t  reserved[2];
+    uint32_t town_version;
+    int64_t  server_unix_ms;
+    acnet_slot_info_t slots[ACNET_MAX_PLAYERS];
+} acnet_status_reply_t;
 
 /* Puppet stream (step 2). Sent by each client at 20-30 Hz, relayed to the
  * others. area identifies the field or room so puppets are only drawn when
