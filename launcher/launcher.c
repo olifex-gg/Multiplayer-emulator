@@ -6,9 +6,9 @@
  * code, clicks Play; the launcher writes the game's settings.ini [Network]
  * block, starts the local server if hosting, and launches the game.
  *
- * Build (from repo root, with MinGW):
- *   i686-w64-mingw32-gcc -O2 -mwindows launcher/launcher.c \
- *       -o AnimalCrossingOnline.exe -lws2_32 -lshell32 -luser32 -lgdi32
+ * Build (from repo root): bash launcher/build-windows.sh
+ * The whole look is drawn with GDI by the launcher itself; it ships and uses
+ * no game assets, fonts or logos.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -40,8 +40,10 @@ static const char* SETTINGS   = "settings.ini";
 static const char* LAUNCHER_INI = "launcher.ini";
 static const int   SERVER_PORT = 7777;
 
-static HWND g_name, g_addr, g_code, g_status, g_addrlbl, g_host, g_join;
+static HWND g_name, g_addr, g_code, g_host, g_join, g_play, g_quit;
 static HWND g_main_wnd;
+static int  g_mode_host = 1;          /* 1 = host a town, 0 = join a friend */
+static char g_status_text[256];
 
 /* Defined with the rest of the window plumbing below; the waiting room uses it. */
 static HWND mk(const char* cls, const char* text, DWORD style, int x, int y, int w, int h,
@@ -103,7 +105,10 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
 
 /* ---- small helpers ------------------------------------------------------ */
 
-static void set_status(const char* s) { SetWindowTextA(g_status, s); }
+static void set_status(const char* s) {
+    lstrcpynA(g_status_text, s, sizeof(g_status_text));
+    if (g_main_wnd) InvalidateRect(g_main_wnd, NULL, FALSE);
+}
 
 static void trim(char* s) {
     char* p = s;
@@ -304,19 +309,20 @@ static void load_prefs(void) {
 }
 
 static int is_host_mode(void) {
-    return SendMessageA(g_host, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    return g_mode_host;
 }
 
 static void update_mode_ui(void) {
     int host = is_host_mode();
     EnableWindow(g_addr, host ? FALSE : TRUE);
-    SetWindowTextA(g_addrlbl, host ? "Your friends connect to your IP (shown after you click Play)"
-                                   : "Server address (ask your host):");
     if (host) {
         char code[32];
         get_edit(g_code, code, sizeof(code));
         if (code[0] == '\0') { gen_code(code, sizeof(code)); SetWindowTextA(g_code, code); }
     }
+    InvalidateRect(g_host, NULL, FALSE);
+    InvalidateRect(g_join, NULL, FALSE);
+    if (g_main_wnd) InvalidateRect(g_main_wnd, NULL, FALSE);
 }
 
 /* ---- the Play action ---------------------------------------------------- */
@@ -408,6 +414,254 @@ static void on_play(HWND wnd) {
     lobby_open(wnd, host, addr, code, name);
 }
 
+
+/* ---- look ---------------------------------------------------------------- */
+/* Everything visual is drawn by the launcher itself with GDI. No game assets,
+ * fonts or logos are used or shipped: the launcher borrows the feel of the
+ * game's cream rounded dialogs with wood trim, its sky and grass, a leaf and
+ * pill buttons, and draws all of it from scratch. */
+
+#define CLR_SKY_TOP   RGB(0xB4, 0xE1, 0xF8)
+#define CLR_SKY_BOT   RGB(0xEC, 0xF8, 0xFE)
+#define CLR_GRASS     RGB(0x95, 0xD3, 0x68)
+#define CLR_GRASS_DK  RGB(0x6D, 0xB4, 0x48)
+#define CLR_CREAM     RGB(0xFF, 0xF8, 0xE2)
+#define CLR_CREAM_DK  RGB(0xF0, 0xE0, 0xB9)
+#define CLR_WOOD      RGB(0x8E, 0x5C, 0x2E)
+#define CLR_WOOD_DK   RGB(0x5D, 0x3B, 0x1B)
+#define CLR_TEXT      RGB(0x4A, 0x31, 0x15)
+#define CLR_TEXT_SOFT RGB(0x93, 0x74, 0x50)
+#define CLR_LEAF      RGB(0x55, 0xB3, 0x40)
+#define CLR_LEAF_DK   RGB(0x31, 0x7E, 0x27)
+#define CLR_BTN       RGB(0x5E, 0xC0, 0x4A)
+#define CLR_BTN_HI    RGB(0x78, 0xD3, 0x62)
+#define CLR_BTN_DK    RGB(0x3E, 0x91, 0x2F)
+#define CLR_WHITE     RGB(0xFF, 0xFF, 0xFF)
+#define CLR_ONLINE    RGB(0x3B, 0xB2, 0x44)
+#define CLR_AWAY      RGB(0xBB, 0xB2, 0xA0)
+#define CLR_BAD       RGB(0xD3, 0x4B, 0x3F)
+#define CLR_WAIT      RGB(0xE8, 0xB4, 0x3A)
+
+#define WIN_W 520
+#define WIN_H 470
+
+/* Layout shared by both windows: the cream panel under the title. */
+#define PANEL_L 24
+#define PANEL_T 80
+#define PANEL_R (WIN_W - 24)
+#define PANEL_B (WIN_H - 22)
+
+static HFONT  g_font_title, g_font_body, g_font_bold, g_font_small;
+static HBRUSH g_brush_field, g_brush_field_off;
+
+static HFONT mkfont(const char* face, int px, int weight) {
+    return CreateFontA(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
+                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, face);
+}
+
+static void theme_init(void) {
+    g_font_title = mkfont("Segoe UI", 30, FW_BOLD);
+    g_font_body  = mkfont("Segoe UI", 16, FW_NORMAL);
+    g_font_bold  = mkfont("Segoe UI", 16, FW_SEMIBOLD);
+    g_font_small = mkfont("Segoe UI", 13, FW_NORMAL);
+    g_brush_field     = CreateSolidBrush(CLR_WHITE);
+    g_brush_field_off = CreateSolidBrush(CLR_CREAM_DK);
+}
+
+static void fill_rect(HDC dc, int x, int y, int w, int h, COLORREF c) {
+    RECT r = { x, y, x + w, y + h };
+    HBRUSH b = CreateSolidBrush(c);
+    FillRect(dc, &r, b);
+    DeleteObject(b);
+}
+
+/* Vertical gradient in 2px bands; avoids linking msimg32. */
+static void draw_gradient(HDC dc, RECT r, COLORREF top, COLORREF bot) {
+    int h = r.bottom - r.top, y;
+    for (y = 0; y < h; y += 2) {
+        int t = h > 1 ? y * 255 / (h - 1) : 0;
+        COLORREF c = RGB(GetRValue(top) + ((int)GetRValue(bot) - (int)GetRValue(top)) * t / 255,
+                         GetGValue(top) + ((int)GetGValue(bot) - (int)GetGValue(top)) * t / 255,
+                         GetBValue(top) + ((int)GetBValue(bot) - (int)GetBValue(top)) * t / 255);
+        fill_rect(dc, r.left, r.top + y, r.right - r.left, 2, c);
+    }
+}
+
+static void draw_round(HDC dc, RECT r, int radius, COLORREF fill, int has_fill, COLORREF edge, int edge_w) {
+    HBRUSH b = has_fill ? CreateSolidBrush(fill) : (HBRUSH)GetStockObject(NULL_BRUSH);
+    HPEN p = edge_w > 0 ? CreatePen(PS_SOLID, edge_w, edge) : (HPEN)GetStockObject(NULL_PEN);
+    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, p);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    if (has_fill) DeleteObject(b);
+    if (edge_w > 0) DeleteObject(p);
+}
+
+static void draw_ellipse(HDC dc, int l, int t, int r, int b, COLORREF fill) {
+    HBRUSH br = CreateSolidBrush(fill);
+    HGDIOBJ ob = SelectObject(dc, br), op = SelectObject(dc, GetStockObject(NULL_PEN));
+    Ellipse(dc, l, t, r, b);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(br);
+}
+
+static void draw_cloud(HDC dc, int x, int y, int s) {
+    draw_ellipse(dc, x, y + s / 3, x + s, y + s, CLR_WHITE);
+    draw_ellipse(dc, x + s / 3, y, x + s, y + s * 3 / 4 + 4, CLR_WHITE);
+    draw_ellipse(dc, x + s / 2, y + s / 4, x + s * 5 / 3, y + s, CLR_WHITE);
+}
+
+/* A leaf along the bottom-left -> top-right diagonal, drawn as two Bezier
+ * arcs, with a midrib and a short stem. */
+static void draw_leaf(HDC dc, int cx, int cy, int s, COLORREF fill, COLORREF edge) {
+    POINT pt[7];
+    HBRUSH b = CreateSolidBrush(fill);
+    HPEN p = CreatePen(PS_SOLID, 2, edge);
+    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, p);
+    pt[0].x = cx - s / 2;         pt[0].y = cy + s / 2;          /* stem end */
+    pt[1].x = cx - s * 49 / 100;  pt[1].y = cy - s * 15 / 100;
+    pt[2].x = cx - s * 16 / 100;  pt[2].y = cy - s * 48 / 100;
+    pt[3].x = cx + s / 2;         pt[3].y = cy - s / 2;          /* tip */
+    pt[4].x = cx + s * 48 / 100;  pt[4].y = cy + s * 16 / 100;
+    pt[5].x = cx + s * 15 / 100;  pt[5].y = cy + s * 49 / 100;
+    pt[6] = pt[0];
+    BeginPath(dc);
+    MoveToEx(dc, pt[0].x, pt[0].y, NULL);
+    PolyBezierTo(dc, &pt[1], 6);
+    EndPath(dc);
+    StrokeAndFillPath(dc);
+    MoveToEx(dc, pt[0].x + 3, pt[0].y - 3, NULL);
+    LineTo(dc, pt[3].x - 3, pt[3].y + 3);
+    MoveToEx(dc, pt[0].x, pt[0].y, NULL);
+    LineTo(dc, pt[0].x - s / 5, pt[0].y + s / 5);
+    SelectObject(dc, ob);
+    SelectObject(dc, op);
+    DeleteObject(b);
+    DeleteObject(p);
+}
+
+static void draw_text(HDC dc, HFONT f, COLORREF c, int x, int y, int w, int h, UINT fmt, const char* t) {
+    RECT r = { x, y, x + w, y + h };
+    HGDIOBJ of = SelectObject(dc, f);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c);
+    DrawTextA(dc, t, -1, &r, fmt);
+    SelectObject(dc, of);
+}
+
+static void draw_dot(HDC dc, int cx, int cy, int r, COLORREF c) {
+    draw_ellipse(dc, cx - r, cy - r, cx + r, cy + r, c);
+}
+
+/* Sky, clouds, and two rolling hills hanging off the bottom edge. */
+static void draw_backdrop(HDC dc, int w, int h) {
+    RECT sky = { 0, 0, w, h };
+    draw_gradient(dc, sky, CLR_SKY_TOP, CLR_SKY_BOT);
+    /* Clouds keep clear of the title text: far left behind the leaf, and the
+     * strip of sky to the right of the title. */
+    draw_cloud(dc, 6, 8, 24);
+    draw_cloud(dc, w - 92, 14, 24);
+    draw_cloud(dc, w - 58, 48, 14);
+    draw_ellipse(dc, -w / 2, h - 96, w * 3 / 4, h + 170, CLR_GRASS_DK);
+    draw_ellipse(dc, w / 4, h - 72, w + w / 2, h + 210, CLR_GRASS);
+}
+
+/* The cream dialog panel with wood trim and an inner highlight. */
+static void draw_panel(HDC dc, RECT r) {
+    RECT in = r;
+    draw_round(dc, r, 26, CLR_CREAM, 1, CLR_WOOD, 4);
+    InflateRect(&in, -7, -7);
+    draw_round(dc, in, 18, 0, 0, CLR_CREAM_DK, 1);
+}
+
+/* Title row above the panel: leaf, big text, small line under it. */
+static void draw_title(HDC dc, const char* title, const char* sub) {
+    draw_leaf(dc, 46, 42, 30, CLR_LEAF, CLR_LEAF_DK);
+    draw_text(dc, g_font_title, CLR_TEXT, 72, 16, WIN_W - 90, 40, DT_LEFT | DT_SINGLELINE | DT_VCENTER, title);
+    if (sub) draw_text(dc, g_font_small, CLR_TEXT_SOFT, 74, 54, WIN_W - 90, 18, DT_LEFT | DT_SINGLELINE, sub);
+}
+
+/* Rounded frame painted on the parent behind an EDIT control. */
+static void draw_field_frame(HDC dc, HWND edit, int enabled) {
+    RECT r;
+    GetWindowRect(edit, &r);
+    MapWindowPoints(NULL, GetParent(edit), (POINT*)&r, 2);
+    InflateRect(&r, 6, 5);
+    draw_round(dc, r, 12, enabled ? CLR_WHITE : CLR_CREAM_DK, 1, CLR_WOOD, 2);
+}
+
+/* Owner-drawn buttons. kind: 0 primary (green), 1 secondary (cream),
+ * 2 toggle selected, 3 toggle unselected. */
+static void draw_button(const DRAWITEMSTRUCT* di, int kind) {
+    RECT r = di->rcItem;
+    HDC dc = di->hDC;
+    int pressed  = (di->itemState & ODS_SELECTED) != 0;
+    int disabled = (di->itemState & ODS_DISABLED) != 0;
+    int radius = r.bottom - r.top;
+    COLORREF fill, edge, txt;
+    char text[128];
+
+    GetWindowTextA(di->hwndItem, text, sizeof(text));
+    fill_rect(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, CLR_CREAM);
+
+    if (kind == 0)      { fill = pressed ? CLR_BTN_DK : CLR_BTN; edge = CLR_BTN_DK; txt = CLR_WHITE; }
+    else if (kind == 2) { fill = CLR_LEAF;  edge = CLR_LEAF_DK; txt = CLR_WHITE; }
+    else if (kind == 3) { fill = CLR_CREAM_DK; edge = CLR_WOOD; txt = CLR_TEXT_SOFT; }
+    else                { fill = pressed ? CLR_CREAM_DK : CLR_WHITE; edge = CLR_WOOD; txt = CLR_TEXT; }
+    if (disabled) { fill = CLR_CREAM_DK; edge = CLR_AWAY; txt = CLR_AWAY; }
+
+    InflateRect(&r, -1, -1);
+    if (pressed && !disabled) OffsetRect(&r, 1, 1);
+    draw_round(dc, r, radius, fill, 1, edge, 2);
+    if (kind == 0 && !disabled && !pressed) {
+        RECT hi = r;
+        hi.top += 3; hi.bottom = hi.top + (r.bottom - r.top) / 2 - 2;
+        InflateRect(&hi, -6, 0);
+        draw_round(dc, hi, radius, CLR_BTN_HI, 1, CLR_BTN_HI, 0);
+    }
+    draw_text(dc, g_font_bold, txt, r.left, r.top, r.right - r.left, r.bottom - r.top,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE, text);
+    if (di->itemState & ODS_FOCUS) {
+        RECT f = r;
+        InflateRect(&f, -4, -4);
+        draw_round(dc, f, radius, 0, 0, kind == 0 || kind == 2 ? CLR_WHITE : CLR_WOOD, 1);
+    }
+}
+
+/* Double-buffered WM_PAINT: paint(dc) draws the whole client area. */
+typedef void (*paint_fn)(HDC dc, int w, int h);
+static void paint_buffered(HWND wnd, paint_fn paint) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(wnd, &ps);
+    RECT rc;
+    HDC mem;
+    HBITMAP bmp;
+    HGDIOBJ old;
+    GetClientRect(wnd, &rc);
+    mem = CreateCompatibleDC(dc);
+    bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+    old = SelectObject(mem, bmp);
+    paint(mem, rc.right, rc.bottom);
+    BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(wnd, &ps);
+}
+
+static void set_font(HWND h, HFONT f) { SendMessageA(h, WM_SETFONT, (WPARAM)f, TRUE); }
+
+/* Create a top-level window of exactly WIN_W x WIN_H client pixels. */
+static HWND make_window(const char* cls, const char* title) {
+    RECT r = { 0, 0, WIN_W, WIN_H };
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    AdjustWindowRect(&r, style, FALSE);
+    return CreateWindowA(cls, title, style, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
+                         r.bottom - r.top, NULL, NULL, GetModuleHandle(NULL), NULL);
+}
+
 /* ---- waiting room ------------------------------------------------------- */
 /* A lobby the player sees before entering the town. It keeps one connection
  * to the town server and polls it with a status request, which the server
@@ -435,7 +689,20 @@ typedef struct {
 
 static lobby_t g_lobby;
 static HANDLE  g_lobby_thread;
-static HWND    g_lb_wnd, g_lb_conn, g_lb_slot[ACNET_MAX_PLAYERS], g_lb_town, g_lb_note, g_lb_enter;
+static HWND    g_lb_wnd, g_lb_enter, g_lb_back;
+
+/* What the waiting room shows, recomputed by lobby_refresh() from the shared
+ * state and painted by lobby_paint(). */
+typedef struct {
+    int  conn_state;                 /* LOBBY_* */
+    char conn_text[200];
+    char slot_name[ACNET_MAX_PLAYERS][ACNET_NAME_LEN + 1];
+    int  slot_online[ACNET_MAX_PLAYERS];
+    int  slot_known;                 /* 1 = the resident rows carry real data */
+    char town_text[240];
+    char note_text[300];
+} lobby_view_t;
+static lobby_view_t g_lbv;
 static int     g_lb_is_host;
 static char    g_lb_name[64], g_lb_addr[160], g_lb_code[64];
 
@@ -572,9 +839,9 @@ static void lobby_refresh(void) {
     lobby_t* L = &g_lobby;
     acnet_status_reply_t r;
     int  state, have, i;
-    char err[160], line[320];
+    char err[160];
 
-    if (!L->wnd || !g_lb_conn) return;
+    if (!L->wnd) return;
 
     EnterCriticalSection(&L->cs);
     state = L->state;
@@ -583,47 +850,41 @@ static void lobby_refresh(void) {
     lstrcpynA(err, L->err, sizeof(err));
     LeaveCriticalSection(&L->cs);
 
+    g_lbv.conn_state = state;
     if (state == LOBBY_OK) {
-        SetWindowTextA(g_lb_conn, "Connected to the town server.");
+        lstrcpynA(g_lbv.conn_text, "Connected to the town server", sizeof(g_lbv.conn_text));
     } else if (state == LOBBY_CONNECTING) {
-        SetWindowTextA(g_lb_conn, "Contacting the town server...");
+        lstrcpynA(g_lbv.conn_text, "Contacting the town server...", sizeof(g_lbv.conn_text));
     } else {
-        snprintf(line, sizeof(line), "Not connected - %s", err[0] ? err : "no reply from the server");
-        SetWindowTextA(g_lb_conn, line);
+        snprintf(g_lbv.conn_text, sizeof(g_lbv.conn_text), "Not connected - %s",
+                 err[0] ? err : "no reply from the server");
     }
     EnableWindow(g_lb_enter, state == LOBBY_OK ? TRUE : FALSE);
 
+    g_lbv.slot_known = (state == LOBBY_OK && have);
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
-        char nm[ACNET_NAME_LEN + 1];
-        if (state == LOBBY_OK && have && r.room_known) {
-            memcpy(nm, r.slots[i].name, ACNET_NAME_LEN);
-            nm[ACNET_NAME_LEN] = '\0';
-            if (nm[0]) {
-                snprintf(line, sizeof(line), "Resident %d:   %s   %s", i + 1, nm,
-                         r.slots[i].online ? "(in town now)" : "(away)");
-            } else {
-                snprintf(line, sizeof(line), "Resident %d:   - empty -", i + 1);
-            }
-        } else if (state == LOBBY_OK && have) {
-            snprintf(line, sizeof(line), "Resident %d:   - empty -", i + 1);
-        } else {
-            snprintf(line, sizeof(line), "Resident %d:", i + 1);
+        g_lbv.slot_name[i][0] = '\0';
+        g_lbv.slot_online[i] = 0;
+        if (g_lbv.slot_known && r.room_known) {
+            memcpy(g_lbv.slot_name[i], r.slots[i].name, ACNET_NAME_LEN);
+            g_lbv.slot_name[i][ACNET_NAME_LEN] = '\0';
+            g_lbv.slot_online[i] = r.slots[i].online;
         }
-        SetWindowTextA(g_lb_slot[i], line);
     }
 
     if (state != LOBBY_OK || !have) {
-        SetWindowTextA(g_lb_town, "");
+        g_lbv.town_text[0] = '\0';
     } else if (!r.room_known) {
-        SetWindowTextA(g_lb_town,
-                       "This town has not been started yet. Enter and save once to create it.");
+        lstrcpynA(g_lbv.town_text, "This town has not been started yet. Enter and save once to create it.",
+                  sizeof(g_lbv.town_text));
     } else if (!r.town_present) {
-        SetWindowTextA(g_lb_town,
-                       "Nobody has saved yet - the first person to save creates the town.");
+        lstrcpynA(g_lbv.town_text, "Nobody has saved yet - the first person to save creates the town.",
+                  sizeof(g_lbv.town_text));
     } else {
-        snprintf(line, sizeof(line), "The town is ready. Everyone who enters loads the same one.");
-        SetWindowTextA(g_lb_town, line);
+        lstrcpynA(g_lbv.town_text, "The town is ready. Everyone who enters loads the same one.",
+                  sizeof(g_lbv.town_text));
     }
+    InvalidateRect(g_lb_wnd, NULL, FALSE);
 }
 
 static void lobby_enter_town(HWND wnd) {
@@ -637,44 +898,87 @@ static void lobby_enter_town(HWND wnd) {
     PostQuitMessage(0);
 }
 
+static void lobby_paint(HDC dc, int w, int h) {
+    RECT panel = { PANEL_L, PANEL_T, PANEL_R, PANEL_B };
+    char line[200];
+    int  x = PANEL_L + 20, y, i;
+    COLORREF dot;
+
+    draw_backdrop(dc, w, h);
+    snprintf(line, sizeof(line), "Town \"%s\"", g_lb_code);
+    draw_title(dc, "Waiting room", line);
+    draw_panel(dc, panel);
+
+    /* connection line */
+    y = PANEL_T + 18;
+    dot = g_lbv.conn_state == LOBBY_OK ? CLR_ONLINE : g_lbv.conn_state == LOBBY_CONNECTING ? CLR_WAIT : CLR_BAD;
+    draw_dot(dc, x + 7, y + 10, 6, dot);
+    draw_text(dc, g_font_bold, CLR_TEXT, x + 22, y, PANEL_R - x - 40, 20, DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+              g_lbv.conn_text);
+
+    /* resident rows */
+    y += 34;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        RECT chip = { x, y, PANEL_R - 20, y + 36 };
+        int  has = g_lbv.slot_name[i][0] != 0;
+        draw_round(dc, chip, 18, has ? CLR_WHITE : CLR_CREAM_DK, 1, has ? CLR_WOOD : CLR_CREAM_DK, 2);
+        draw_dot(dc, x + 18, y + 18, 11, has ? (g_lbv.slot_online[i] ? CLR_ONLINE : CLR_AWAY) : CLR_CREAM);
+        snprintf(line, sizeof(line), "%d", i + 1);
+        draw_text(dc, g_font_small, has ? CLR_WHITE : CLR_TEXT_SOFT, x + 8, y, 20, 36,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
+        if (has) {
+            draw_text(dc, g_font_bold, CLR_TEXT, x + 40, y, 250, 36, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                      g_lbv.slot_name[i]);
+            draw_text(dc, g_font_small, g_lbv.slot_online[i] ? CLR_ONLINE : CLR_TEXT_SOFT, x + 40, y,
+                      PANEL_R - 20 - x - 56, 36, DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+                      g_lbv.slot_online[i] ? "in town now" : "away");
+        } else {
+            draw_text(dc, g_font_body, CLR_TEXT_SOFT, x + 40, y, 250, 36, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                      g_lbv.slot_known ? "empty - a friend can move in" : "");
+        }
+        y += 42;
+    }
+
+    /* town status and the note for friends */
+    y += 2;
+    draw_text(dc, g_font_body, CLR_TEXT, x, y, PANEL_R - 20 - x, 40, DT_LEFT | DT_WORDBREAK, g_lbv.town_text);
+    y += 44;
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, y, PANEL_R - 20 - x, 54, DT_LEFT | DT_WORDBREAK, g_lbv.note_text);
+}
+
 static LRESULT CALLBACK LobbyProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE: {
-        int y = 12, i;
-        char line[320];
-        mk("STATIC", "Waiting room", 0, 16, y, 300, 20, wnd, 0);
-        y += 24;
-        g_lb_conn = mk("STATIC", "Contacting the town server...", 0, 16, y, 420, 20, wnd, 0);
-        y += 28;
-        snprintf(line, sizeof(line), "Town \"%s\"", g_lb_code);
-        mk("STATIC", line, 0, 16, y, 420, 20, wnd, 0);
-        y += 24;
-        for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
-            g_lb_slot[i] = mk("STATIC", "", 0, 28, y, 410, 20, wnd, 0);
-            y += 20;
-        }
-        y += 8;
-        g_lb_town = mk("STATIC", "", 0, 16, y, 430, 34, wnd, 0);
-        y += 40;
-        g_lb_note = mk("STATIC", "", 0, 16, y, 430, 52, wnd, 0);
-        y += 58;
-        g_lb_enter = mk("BUTTON", "Enter Town", BS_DEFPUSHBUTTON, 16, y, 130, 32, wnd, IDC_LB_ENTER);
-        mk("BUTTON", "Back", 0, 316, y, 130, 32, wnd, IDC_LB_BACK);
+        int by = PANEL_B - 58;
+        g_lb_enter = mk("BUTTON", "Enter Town", BS_OWNERDRAW, PANEL_L + 20, by, 210, 42, wnd, IDC_LB_ENTER);
+        g_lb_back  = mk("BUTTON", "Back", BS_OWNERDRAW, PANEL_R - 20 - 150, by, 150, 42, wnd, IDC_LB_BACK);
         EnableWindow(g_lb_enter, FALSE);
 
+        memset(&g_lbv, 0, sizeof(g_lbv));
+        g_lbv.conn_state = LOBBY_CONNECTING;
+        lstrcpynA(g_lbv.conn_text, "Contacting the town server...", sizeof(g_lbv.conn_text));
         if (g_lb_is_host) {
             char ip[64];
             local_ip(ip, sizeof(ip));
-            snprintf(line, sizeof(line),
+            snprintf(g_lbv.note_text, sizeof(g_lbv.note_text),
                      "Friends in your house join with:  %s\n"
-                     "Friends elsewhere need your public IP (search \"what is my IP\")\n"
+                     "Friends elsewhere need your public IP (search \"what is my IP\") "
                      "and UDP port %d forwarded to this PC.", ip, SERVER_PORT);
         } else {
-            snprintf(line, sizeof(line), "Joining %s", g_lb_addr);
+            snprintf(g_lbv.note_text, sizeof(g_lbv.note_text), "Joining %s", g_lb_addr);
         }
-        SetWindowTextA(g_lb_note, line);
         SetTimer(wnd, 1, 1000, NULL);
         return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        paint_buffered(wnd, lobby_paint);
+        return 0;
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT* di = (const DRAWITEMSTRUCT*)lp;
+        draw_button(di, di->CtlID == IDC_LB_ENTER ? 0 : 1);
+        return TRUE;
     }
     case WM_APP + 1:
     case WM_TIMER:
@@ -722,10 +1026,7 @@ static void lobby_open(HWND parent, int is_host, const char* addr, const char* c
     g_lobby.state = LOBBY_CONNECTING;
 
     llog("lobby: creating window");
-    g_lb_wnd = CreateWindowA("ACOnlineLobby", "Animal Crossing Online - Waiting Room",
-                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 476, 400, NULL, NULL,
-                             GetModuleHandle(NULL), NULL);
+    g_lb_wnd = make_window("ACOnlineLobby", "Animal Crossing Online - Waiting Room");
     if (!g_lb_wnd) { llog("lobby: CreateWindow FAILED (error %lu)", (unsigned long)GetLastError()); return; }
     g_lobby.wnd = g_lb_wnd;
     llog("lobby: window created");
@@ -744,33 +1045,79 @@ static HWND mk(const char* cls, const char* text, DWORD style, int x, int y, int
                          (HMENU)(INT_PTR)id, GetModuleHandle(NULL), NULL);
 }
 
+static void main_paint(HDC dc, int w, int h) {
+    RECT panel = { PANEL_L, PANEL_T, PANEL_R, PANEL_B };
+    int x = PANEL_L + 20;
+    int host = is_host_mode();
+
+    draw_backdrop(dc, w, h);
+    draw_title(dc, "Animal Crossing Online", "Play the GameCube classic with friends, in one shared town");
+    draw_panel(dc, panel);
+
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, 158, 220, 18, DT_LEFT | DT_SINGLELINE, "YOUR NAME");
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x + 236, 158, 220, 18, DT_LEFT | DT_SINGLELINE, "INVITE CODE");
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, 228, 440, 18, DT_LEFT | DT_SINGLELINE,
+              host ? "SERVER ADDRESS  (not needed - you are the server)"
+                   : "SERVER ADDRESS  (ask your host for it)");
+    draw_field_frame(dc, g_name, 1);
+    draw_field_frame(dc, g_code, 1);
+    draw_field_frame(dc, g_addr, !host);
+
+    draw_text(dc, g_font_body, CLR_TEXT_SOFT, x, 300, PANEL_R - 20 - x, 60, DT_LEFT | DT_WORDBREAK,
+              g_status_text[0] ? g_status_text
+                               : (host ? "Hosting starts the town server on this PC. Your friends join with your address and the invite code."
+                                       : "Enter the address and invite code your host gave you."));
+}
+
 static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE: {
-        int y = 12;
-        mk("STATIC", "Play Animal Crossing online with friends.", 0, 16, y, 420, 20, wnd, 0); y += 30;
-        mk("BUTTON", "Mode", BS_GROUPBOX, 12, y, 430, 60, wnd, 0);
-        g_host = mk("BUTTON", "Host a new town (others join you)", BS_AUTORADIOBUTTON | WS_GROUP, 24, y+22, 250, 20, wnd, IDC_HOST);
-        g_join = mk("BUTTON", "Join a friend's town", BS_AUTORADIOBUTTON, 284, y+22, 150, 20, wnd, IDC_JOIN);
-        y += 74;
-        mk("STATIC", "Your name:", 0, 16, y+3, 120, 20, wnd, 0);
-        g_name = mk("EDIT", "", WS_BORDER | ES_AUTOHSCROLL, 140, y, 200, 22, wnd, IDC_NAME); y += 34;
-        g_addrlbl = mk("STATIC", "Server address (ask your host):", 0, 16, y+3, 300, 20, wnd, IDC_ADDRLBL);
-        g_addr = mk("EDIT", "", WS_BORDER | ES_AUTOHSCROLL, 16, y+22, 300, 22, wnd, IDC_ADDR); y += 56;
-        mk("STATIC", "Invite code:", 0, 16, y+3, 120, 20, wnd, 0);
-        g_code = mk("EDIT", "", WS_BORDER | ES_AUTOHSCROLL, 140, y, 200, 22, wnd, IDC_CODE); y += 40;
-        mk("BUTTON", "Play", BS_DEFPUSHBUTTON, 16, y, 120, 32, wnd, IDC_PLAY);
-        mk("BUTTON", "Quit", 0, 322, y, 120, 32, wnd, IDC_QUIT); y += 42;
-        g_status = mk("STATIC", "", 0, 16, y, 426, 40, wnd, IDC_STATUS);
-        SendMessageA(g_host, BM_SETCHECK, BST_CHECKED, 0);
+        int x = PANEL_L + 20;
+        g_host = mk("BUTTON", "Host a town",    BS_OWNERDRAW, x,       PANEL_T + 22, 212, 40, wnd, IDC_HOST);
+        g_join = mk("BUTTON", "Join a friend",  BS_OWNERDRAW, x + 220, PANEL_T + 22, 212, 40, wnd, IDC_JOIN);
+        g_name = mk("EDIT", "", ES_AUTOHSCROLL, x + 6,       180, 200, 22, wnd, IDC_NAME);
+        g_code = mk("EDIT", "", ES_AUTOHSCROLL, x + 236 + 6, 180, 190, 22, wnd, IDC_CODE);
+        g_addr = mk("EDIT", "", ES_AUTOHSCROLL, x + 6,       250, 420, 22, wnd, IDC_ADDR);
+        g_play = mk("BUTTON", "Play", BS_OWNERDRAW, x, PANEL_B - 62, 210, 44, wnd, IDC_PLAY);
+        g_quit = mk("BUTTON", "Quit", BS_OWNERDRAW, PANEL_R - 20 - 150, PANEL_B - 62, 150, 44, wnd, IDC_QUIT);
+        set_font(g_name, g_font_body);
+        set_font(g_code, g_font_body);
+        set_font(g_addr, g_font_body);
+        SendMessageA(g_name, EM_SETLIMITTEXT, ACNET_NAME_LEN - 1, 0);
+        SendMessageA(g_code, EM_SETLIMITTEXT, ACNET_INVITE_LEN - 1, 0);
         load_prefs();
         update_mode_ui();
         return 0;
     }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        paint_buffered(wnd, main_paint);
+        return 0;
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = (HDC)wp;
+        int enabled = IsWindowEnabled((HWND)lp);
+        SetTextColor(dc, enabled ? CLR_TEXT : CLR_TEXT_SOFT);
+        SetBkColor(dc, enabled ? CLR_WHITE : CLR_CREAM_DK);
+        return (LRESULT)(enabled ? g_brush_field : g_brush_field_off);
+    }
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT* di = (const DRAWITEMSTRUCT*)lp;
+        int kind;
+        switch (di->CtlID) {
+        case IDC_HOST: kind = is_host_mode() ? 2 : 3; break;
+        case IDC_JOIN: kind = is_host_mode() ? 3 : 2; break;
+        case IDC_PLAY: kind = 0; break;
+        default:       kind = 1; break;
+        }
+        draw_button(di, kind);
+        return TRUE;
+    }
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case IDC_HOST:
-        case IDC_JOIN: update_mode_ui(); return 0;
+        case IDC_HOST: g_mode_host = 1; update_mode_ui(); return 0;
+        case IDC_JOIN: g_mode_host = 0; update_mode_ui(); return 0;
         case IDC_PLAY: on_play(wnd); return 0;
         case IDC_QUIT: PostQuitMessage(0); return 0;
         }
@@ -792,12 +1139,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     InitializeCriticalSection(&g_lobby.cs);
     llog("---- launcher start, folder %s", g_dir);
     WSAStartup(MAKEWORD(2, 2), &wsa);
+    theme_init();
 
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hbrBackground = NULL; /* everything is painted in WM_PAINT */
     wc.lpszClassName = "ACOnlineLauncher";
     RegisterClassA(&wc);
 
@@ -813,9 +1161,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
         return 1;
     }
 
-    wnd = CreateWindowA("ACOnlineLauncher", "Animal Crossing Online",
-                        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                        CW_USEDEFAULT, CW_USEDEFAULT, 476, 340, NULL, NULL, inst, NULL);
+    wnd = make_window("ACOnlineLauncher", "Animal Crossing Online");
     g_main_wnd = wnd;
     llog("main window %s", wnd ? "created" : "FAILED");
     ShowWindow(wnd, show);
@@ -823,6 +1169,20 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
 
     while (GetMessage(&m, NULL, 0, 0) > 0) {
         HWND active = g_lb_wnd ? g_lb_wnd : wnd;
+        /* Enter triggers the main action; owner-drawn buttons cannot be the
+         * dialog's default button, so do it by hand. */
+        /* Ctrl+A selects all in a text field; plain EDIT controls do not. */
+        if (m.message == WM_KEYDOWN && m.wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            char cls[16];
+            if (GetClassNameA(m.hwnd, cls, sizeof(cls)) && lstrcmpiA(cls, "EDIT") == 0) {
+                SendMessageA(m.hwnd, EM_SETSEL, 0, -1);
+                continue;
+            }
+        }
+        if (m.message == WM_KEYDOWN && m.wParam == VK_RETURN) {
+            if (g_lb_wnd && IsWindowEnabled(g_lb_enter)) { PostMessageA(g_lb_wnd, WM_COMMAND, IDC_LB_ENTER, 0); continue; }
+            if (!g_lb_wnd) { PostMessageA(wnd, WM_COMMAND, IDC_PLAY, 0); continue; }
+        }
         if (!IsDialogMessage(active, &m)) { TranslateMessage(&m); DispatchMessage(&m); }
     }
     llog("message loop ended");
