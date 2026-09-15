@@ -51,6 +51,56 @@ static void lobby_open(HWND parent, int is_host, const char* addr, const char* c
                        const char* name);
 static char g_dir[MAX_PATH]; /* folder the launcher (and game) live in */
 
+/* ---- diagnostics ------------------------------------------------------- */
+/* launcher.log next to the launcher: breadcrumbs plus, if it crashes, where.
+ * Written with plain Win32 file calls so it works from any thread and needs
+ * no state, and flushed per line so the last line before a crash survives. */
+static void llog(const char* fmt, ...) {
+    char path[MAX_PATH], line[1024];
+    va_list ap;
+    HANDLE h;
+    DWORD n, written;
+    SYSTEMTIME st;
+
+    GetLocalTime(&st);
+    n = (DWORD)snprintf(line, sizeof(line), "%02u:%02u:%02u.%03u ", st.wHour, st.wMinute, st.wSecond,
+                        st.wMilliseconds);
+    va_start(ap, fmt);
+    n += (DWORD)vsnprintf(line + n, sizeof(line) - n - 2, fmt, ap);
+    va_end(ap);
+    if (n > sizeof(line) - 3) n = sizeof(line) - 3;
+    line[n++] = '\r'; line[n++] = '\n'; line[n] = '\0';
+
+    snprintf(path, sizeof(path), "%slauncher.log", g_dir[0] ? g_dir : "");
+    h = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteFile(h, line, n, &written, NULL);
+    FlushFileBuffers(h);
+    CloseHandle(h);
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
+    void* addr = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress : NULL;
+    DWORD code = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0;
+    HMODULE mod = NULL;
+    char name[MAX_PATH], msg[600];
+    name[0] = '\0';
+    if (addr && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)addr, &mod) && mod) {
+        if (!GetModuleFileNameA(mod, name, sizeof(name))) name[0] = '\0';
+    }
+    llog("*** CRASH: exception 0x%08lX at %p in %s (base %p, offset 0x%lX)",
+         (unsigned long)code, addr, name[0] ? name : "?", (void*)mod,
+         (unsigned long)((char*)addr - (char*)mod));
+    snprintf(msg, sizeof(msg),
+             "The launcher crashed.\n\nException 0x%08lX at %p\nin %s\n\n"
+             "Details were written to launcher.log next to the launcher - please send that file.",
+             (unsigned long)code, addr, name[0] ? name : "(unknown module)");
+    MessageBoxA(NULL, msg, "Animal Crossing Online", MB_OK | MB_ICONERROR);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 /* ---- small helpers ------------------------------------------------------ */
 
 static void set_status(const char* s) { SetWindowTextA(g_status, s); }
@@ -274,6 +324,7 @@ static void update_mode_ui(void) {
 static void on_play(HWND wnd) {
     char name[64], addr[128], code[64], msg[512];
     int host = is_host_mode();
+    llog("Play clicked (%s)", host ? "host" : "join");
 
     get_edit(g_name, name, sizeof(name));
     get_edit(g_addr, addr, sizeof(addr));
@@ -320,7 +371,9 @@ static void on_play(HWND wnd) {
         return;
     }
 
+    llog("checks passed; writing settings.ini");
     if (!write_settings(host, addr, code, name)) {
+        llog("write_settings FAILED");
         MessageBoxA(wnd, "Could not write settings.ini (is the folder read-only?).", "Error", MB_OK|MB_ICONERROR);
         return;
     }
@@ -340,7 +393,9 @@ static void on_play(HWND wnd) {
             }
             return;
         }
+        llog("starting local server");
         if (!start_local_server(code)) {
+            llog("start_local_server FAILED");
             MessageBoxA(wnd, "The town server failed to start.", "Cannot host", MB_OK|MB_ICONERROR);
             return;
         }
@@ -349,6 +404,7 @@ static void on_play(HWND wnd) {
 
     save_prefs(name, addr, code);
     set_status("");
+    llog("opening waiting room");
     lobby_open(wnd, host, addr, code, name);
 }
 
@@ -434,8 +490,10 @@ static DWORD WINAPI lobby_worker(LPVOID arg) {
     DWORD     connect_started = 0;
     DWORD     last_poll = 0;
 
+    llog("lobby thread: start (server %s, town %s)", L->host, L->invite);
     host = enet_host_create(NULL, 1, ACNET_CHANNELS, 0, 0);
     if (!host) {
+        llog("lobby thread: enet_host_create FAILED");
         lobby_set_state(L, LOBBY_FAILED, "could not open a network socket");
         return 0;
     }
@@ -465,12 +523,14 @@ static DWORD WINAPI lobby_worker(LPVOID arg) {
 
         while (enet_host_service(host, &ev, 100) > 0) {
             if (ev.type == ENET_EVENT_TYPE_CONNECT) {
+                llog("lobby thread: connected");
                 lobby_set_state(L, LOBBY_OK, "");
                 last_poll = 0;
             } else if (ev.type == ENET_EVENT_TYPE_RECEIVE) {
                 lobby_on_packet(L, ev.packet->data, ev.packet->dataLength);
                 enet_packet_destroy(ev.packet);
             } else if (ev.type == ENET_EVENT_TYPE_DISCONNECT) {
+                llog("lobby thread: disconnected");
                 peer = NULL;
                 lobby_set_state(L, LOBBY_FAILED, "the server closed the connection");
                 break;
@@ -496,6 +556,7 @@ static DWORD WINAPI lobby_worker(LPVOID arg) {
 
     if (peer) enet_peer_disconnect_now(peer, 0);
     enet_host_destroy(host);
+    llog("lobby thread: exit");
     return 0;
 }
 
@@ -564,6 +625,7 @@ static void lobby_refresh(void) {
 }
 
 static void lobby_enter_town(HWND wnd) {
+    llog("Enter Town clicked");
     lobby_stop();
     save_prefs(g_lb_name, g_lb_addr, g_lb_code);
     if (!launch(GAME_EXE, 0)) {
@@ -652,17 +714,20 @@ static void lobby_open(HWND parent, int is_host, const char* addr, const char* c
     lstrcpynA(g_lobby.invite, code, sizeof(g_lobby.invite));
     g_lobby.state = LOBBY_CONNECTING;
 
+    llog("lobby: creating window");
     g_lb_wnd = CreateWindowA("ACOnlineLobby", "Animal Crossing Online - Waiting Room",
                              WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                              CW_USEDEFAULT, CW_USEDEFAULT, 476, 400, NULL, NULL,
                              GetModuleHandle(NULL), NULL);
-    if (!g_lb_wnd) return;
+    if (!g_lb_wnd) { llog("lobby: CreateWindow FAILED (error %lu)", (unsigned long)GetLastError()); return; }
     g_lobby.wnd = g_lb_wnd;
+    llog("lobby: window created");
     ShowWindow(parent, SW_HIDE);
     ShowWindow(g_lb_wnd, SW_SHOW);
     UpdateWindow(g_lb_wnd);
 
     g_lobby_thread = CreateThread(NULL, 0, lobby_worker, &g_lobby, 0, &tid);
+    llog("lobby: thread %s", g_lobby_thread ? "started" : "FAILED");
 }
 
 /* ---- window plumbing ---------------------------------------------------- */
@@ -715,8 +780,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     WSADATA wsa;
     (void)prev; (void)cmd;
 
-    WSAStartup(MAKEWORD(2, 2), &wsa);
     compute_dir();
+    SetUnhandledExceptionFilter(crash_filter);
+    llog("---- launcher start, folder %s", g_dir);
+    WSAStartup(MAKEWORD(2, 2), &wsa);
 
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = WndProc;
@@ -730,7 +797,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
     wc.lpszClassName = "ACOnlineLobby";
     RegisterClassA(&wc);
 
+    llog("window classes registered");
     if (enet_initialize() != 0) {
+        llog("enet_initialize FAILED");
         MessageBoxA(NULL, "Could not start networking (enet_initialize failed).",
                     "Animal Crossing Online", MB_OK | MB_ICONERROR);
         return 1;
@@ -740,6 +809,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
                         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                         CW_USEDEFAULT, CW_USEDEFAULT, 476, 340, NULL, NULL, inst, NULL);
     g_main_wnd = wnd;
+    llog("main window %s", wnd ? "created" : "FAILED");
     ShowWindow(wnd, show);
     UpdateWindow(wnd);
 
@@ -747,8 +817,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
         HWND active = g_lb_wnd ? g_lb_wnd : wnd;
         if (!IsDialogMessage(active, &m)) { TranslateMessage(&m); DispatchMessage(&m); }
     }
+    llog("message loop ended");
     lobby_stop();
     enet_deinitialize();
     WSACleanup();
+    llog("clean exit");
     return 0;
 }
