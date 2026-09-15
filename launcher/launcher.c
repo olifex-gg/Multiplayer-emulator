@@ -574,6 +574,8 @@ static void lobby_refresh(void) {
     int  state, have, i;
     char err[160], line[320];
 
+    if (!L->wnd || !g_lb_conn) return;
+
     EnterCriticalSection(&L->cs);
     state = L->state;
     have  = L->have;
@@ -708,8 +710,13 @@ static void lobby_open(HWND parent, int is_host, const char* addr, const char* c
     lstrcpynA(g_lb_addr, addr, sizeof(g_lb_addr));
     lstrcpynA(g_lb_code, code, sizeof(g_lb_code));
 
-    memset(&g_lobby, 0, sizeof(g_lobby));
-    InitializeCriticalSection(&g_lobby.cs);
+    /* Reset everything except the critical section, which lives for the
+     * whole process (initialized once in WinMain). */
+    g_lobby.stop = 0;
+    g_lobby.wnd = NULL;
+    g_lobby.have = 0;
+    g_lobby.err[0] = '\0';
+    memset(&g_lobby.rep, 0, sizeof(g_lobby.rep));
     lstrcpynA(g_lobby.host, is_host ? "127.0.0.1" : addr, sizeof(g_lobby.host));
     lstrcpynA(g_lobby.invite, code, sizeof(g_lobby.invite));
     g_lobby.state = LOBBY_CONNECTING;
@@ -782,6 +789,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
 
     compute_dir();
     SetUnhandledExceptionFilter(crash_filter);
+    InitializeCriticalSection(&g_lobby.cs);
     llog("---- launcher start, folder %s", g_dir);
     WSAStartup(MAKEWORD(2, 2), &wsa);
 
@@ -805,7 +813,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
         return 1;
     }
 
-    wnd = CreateWindowA(wc.lpszClassName, "Animal Crossing Online",
+    wnd = CreateWindowA("ACOnlineLauncher", "Animal Crossing Online",
                         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                         CW_USEDEFAULT, CW_USEDEFAULT, 476, 340, NULL, NULL, inst, NULL);
     g_main_wnd = wnd;
