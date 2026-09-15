@@ -137,4 +137,23 @@ grep -q "ACK status=0 version=3" <<<"$out" || fail "bob live upload: $out"
 wait "$LPID" || true
 grep -q "RESIDENT slot=1 version=3 bytes=19184" "$TMP/alice_live.txt" || fail "alice got no live resident data: $(cat "$TMP/alice_live.txt")"
 
+echo "15. a changed land cell is relayed live and written into the stored town"
+cli --name alice --wait 3 > "$TMP/alice_land.txt" &
+LAPID=$!
+sleep 0.7
+out=$(cli --name bob --land 2,3,4,5,4660)
+wait "$LAPID" || true
+grep -q "LAND count=1 cell=2,3,4,5,4660" "$TMP/alice_land.txt" || fail "alice got no land cell: $(cat "$TMP/alice_land.txt")"
+sleep 6   # server flushes live land edits to disk after 5 s
+python3 - "$TMP/data/towns/$INVITE/town.gci" <<'PYEOF' || fail "land cell not in stored town"
+import sys
+FG_ABS = 64 + 0x26000 + 0x137A8
+idx = ((3 * 5 + 2) * 16 + 5) * 16 + 4
+b = open(sys.argv[1], 'rb').read()
+v = (b[FG_ABS + idx * 2] << 8) | b[FG_ABS + idx * 2 + 1]
+print("stored cell =", v)
+sys.exit(0 if v == 4660 else 1)
+PYEOF
+$MK check "$TMP/data/towns/$INVITE/town.gci" | grep -q "^OK" || fail "stored town checksum broken after land flush"
+
 echo "ALL PASSED"

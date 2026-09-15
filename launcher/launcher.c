@@ -33,6 +33,7 @@
 #define IDC_ADDRLBL 1009
 #define IDC_LB_ENTER 1010
 #define IDC_LB_BACK  1011
+#define IDC_PUPPETS  1012
 
 static const char* GAME_EXE   = "AnimalCrossing.exe";
 static const char* SERVER_EXE = "acnet_server.exe";
@@ -43,6 +44,8 @@ static const int   SERVER_PORT = 7777;
 static HWND g_name, g_addr, g_code, g_host, g_join, g_play, g_quit;
 static HWND g_main_wnd;
 static int  g_mode_host = 1;          /* 1 = host a town, 0 = join a friend */
+static int  g_show_others = 1;        /* draw other residents in-game */
+static HWND g_others;
 static char g_status_text[256];
 
 /* Defined with the rest of the window plumbing below; the waiting room uses it. */
@@ -233,7 +236,7 @@ static int write_settings(int is_host, const char* addr, const char* code, const
                     *eq = '\0'; trim(key);
                     if (!lstrcmpiA(key,"server") || !lstrcmpiA(key,"server_port") ||
                         !lstrcmpiA(key,"invite") || !lstrcmpiA(key,"player_name") ||
-                        !lstrcmpiA(key,"resident_slot")) continue;
+                        !lstrcmpiA(key,"show_other_players") || !lstrcmpiA(key,"resident_slot")) continue;
                 }
             }
             fputs(line, out);
@@ -246,6 +249,7 @@ static int write_settings(int is_host, const char* addr, const char* code, const
     fprintf(out, "server_port = %d\n", SERVER_PORT);
     fprintf(out, "invite = %s\n", code);
     fprintf(out, "player_name = %s\n", name);
+    fprintf(out, "show_other_players = %d\n", g_show_others);
     fclose(out);
 
     DeleteFileA(in_path);
@@ -295,6 +299,7 @@ static void save_prefs(const char* name, const char* addr, const char* code) {
     WritePrivateProfileStringA("last", "name", name, ini);
     WritePrivateProfileStringA("last", "address", addr, ini);
     WritePrivateProfileStringA("last", "code", code, ini);
+    WritePrivateProfileStringA("last", "show_others", g_show_others ? "1" : "0", ini);
 }
 
 static void load_prefs(void) {
@@ -306,6 +311,8 @@ static void load_prefs(void) {
     SetWindowTextA(g_addr, buf);
     GetPrivateProfileStringA("last", "code", "", buf, sizeof(buf), ini);
     SetWindowTextA(g_code, buf);
+    GetPrivateProfileStringA("last", "show_others", "1", buf, sizeof(buf), ini);
+    g_show_others = atoi(buf) != 0;
 }
 
 static int is_host_mode(void) {
@@ -320,8 +327,10 @@ static void update_mode_ui(void) {
         get_edit(g_code, code, sizeof(code));
         if (code[0] == '\0') { gen_code(code, sizeof(code)); SetWindowTextA(g_code, code); }
     }
+    SetWindowTextA(g_others, g_show_others ? "Showing other players: ON" : "Showing other players: OFF");
     InvalidateRect(g_host, NULL, FALSE);
     InvalidateRect(g_join, NULL, FALSE);
+    InvalidateRect(g_others, NULL, FALSE);
     if (g_main_wnd) InvalidateRect(g_main_wnd, NULL, FALSE);
 }
 
@@ -443,7 +452,7 @@ static void on_play(HWND wnd) {
 #define CLR_WAIT      RGB(0xE8, 0xB4, 0x3A)
 
 #define WIN_W 520
-#define WIN_H 470
+#define WIN_H 512
 
 /* Layout shared by both windows: the cream panel under the title. */
 #define PANEL_L 24
@@ -1067,7 +1076,9 @@ static void main_paint(HDC dc, int w, int h) {
     draw_field_frame(dc, g_code, 1);
     draw_field_frame(dc, g_addr, !host);
 
-    draw_text(dc, g_font_body, CLR_TEXT_SOFT, x, 300, PANEL_R - 20 - x, 60, DT_LEFT | DT_WORDBREAK,
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, 390, PANEL_R - 20 - x, 34, DT_LEFT | DT_WORDBREAK,
+              "Turn this off if the game crashes when a friend joins. The shared town still works.");
+    draw_text(dc, g_font_body, CLR_TEXT_SOFT, x, 300, PANEL_R - 20 - x, 44, DT_LEFT | DT_WORDBREAK,
               g_status_text[0] ? g_status_text
                                : (host ? "Hosting starts the town server on this PC. Your friends join with your address and the invite code."
                                        : "Enter the address and invite code your host gave you."));
@@ -1082,8 +1093,9 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_name = mk("EDIT", "", ES_AUTOHSCROLL, x + 6,       180, 200, 22, wnd, IDC_NAME);
         g_code = mk("EDIT", "", ES_AUTOHSCROLL, x + 236 + 6, 180, 190, 22, wnd, IDC_CODE);
         g_addr = mk("EDIT", "", ES_AUTOHSCROLL, x + 6,       250, 420, 22, wnd, IDC_ADDR);
-        g_play = mk("BUTTON", "Play", BS_OWNERDRAW, x, PANEL_B - 62, 210, 44, wnd, IDC_PLAY);
-        g_quit = mk("BUTTON", "Quit", BS_OWNERDRAW, PANEL_R - 20 - 150, PANEL_B - 62, 150, 44, wnd, IDC_QUIT);
+        g_others = mk("BUTTON", "", BS_OWNERDRAW, x, 352, 300, 32, wnd, IDC_PUPPETS);
+        g_play = mk("BUTTON", "Play", BS_OWNERDRAW, x, PANEL_B - 52, 210, 42, wnd, IDC_PLAY);
+        g_quit = mk("BUTTON", "Quit", BS_OWNERDRAW, PANEL_R - 20 - 150, PANEL_B - 52, 150, 42, wnd, IDC_QUIT);
         set_font(g_name, g_font_body);
         set_font(g_code, g_font_body);
         set_font(g_addr, g_font_body);
@@ -1112,6 +1124,7 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
         switch (di->CtlID) {
         case IDC_HOST: kind = is_host_mode() ? 2 : 3; break;
         case IDC_JOIN: kind = is_host_mode() ? 3 : 2; break;
+        case IDC_PUPPETS: kind = g_show_others ? 2 : 3; break;
         case IDC_PLAY: kind = 0; break;
         default:       kind = 1; break;
         }
@@ -1122,6 +1135,7 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case IDC_HOST: g_mode_host = 1; update_mode_ui(); return 0;
         case IDC_JOIN: g_mode_host = 0; update_mode_ui(); return 0;
+        case IDC_PUPPETS: g_show_others = !g_show_others; update_mode_ui(); return 0;
         case IDC_PLAY: on_play(wnd); return 0;
         case IDC_QUIT: PostQuitMessage(0); return 0;
         }

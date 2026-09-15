@@ -17,6 +17,7 @@
 #include "ac_puppet.h"
 #include "pc_net.h"
 #include "pc_save_bswap.h"
+#include "m_field_info.h"
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
 
@@ -25,7 +26,15 @@
  * request). Leaves the skeleton in its bind pose. */
 static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    cKF_Skeleton_R_c* mdl;
     (void)game;
+
+    OSReport("[puppet] ct: building body for resident %d\n", (int)actorx->actor_specific);
+    mdl = mPlib_get_player_mdl_p();
+    if (mdl == NULL) {
+        OSReport("[puppet] ct: no player model available; puppet will not draw\n");
+        return;
+    }
 
     actorx->scale.x = 0.01f;
     actorx->scale.y = 0.01f;
@@ -38,8 +47,9 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     p->now_item_main_index = 0;
     p->item_kind = 0;
 
-    cKF_SkeletonInfo_R_ct(&p->keyframe0, mPlib_get_player_mdl_p(), NULL, p->joint_data, p->morph_data);
+    cKF_SkeletonInfo_R_ct(&p->keyframe0, mdl, NULL, p->joint_data, p->morph_data);
     p->keyframe1 = p->keyframe0;
+    OSReport("[puppet] ct: body ready\n");
 
     Shape_Info_init(actorx, 0.0f, &mAc_ActorShadowCircle, 18.0f, 18.0f);
     actorx->shape_info.ofs_y = 200.0f;
@@ -65,11 +75,36 @@ static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
     (void)game;
 }
 
+/* Draw just the body. Deliberately NOT Player_actor_draw_Normal: that path
+ * runs per-joint callbacks for footprints, head turning, the held-item matrix
+ * and the item-handover clip, all of which read state that belongs to the one
+ * real player. A puppet has none of it, so it draws the skeleton with no
+ * callbacks at all. Textures are the local player's bank (the engine keeps
+ * only one), which is why a puppet currently wears your outfit. */
 static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
-    /* Reuse the player's normal draw. It reads some current-player globals
-     * (outfit bank, main index), so the first cut shares the local player's
-     * appearance; parameterizing that is the next step. */
-    Player_actor_draw_Normal(actorx, game);
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    GRAPH* graph = game->graph;
+    int buf_idx = game->frame_counter % 2;
+    static int logged_first_draw;
+
+    if (p->keyframe0.skeleton == NULL) {
+        return;
+    }
+    if (!logged_first_draw) {
+        logged_first_draw = 1;
+        OSReport("[puppet] first draw (resident %d)\n", (int)actorx->actor_specific);
+    }
+
+    _texture_z_light_fog_prim(graph);
+    OPEN_POLY_OPA_DISP(graph);
+    gSPSegment(POLY_OPA_DISP++, ANIME_1_TXT_SEG, mPlib_Get_eye_tex_p(0));
+    gSPSegment(POLY_OPA_DISP++, ANIME_2_TXT_SEG, mPlib_Get_mouth_tex_p(0));
+    gSPSegment(POLY_OPA_DISP++, ANIME_3_TXT_SEG, mPlib_get_player_tex_p(game));
+    gSPSegment(POLY_OPA_DISP++, ANIME_4_TXT_SEG, mPlib_get_player_pallet_p(game));
+    gSPSegment(POLY_OPA_DISP++, ANIME_5_TXT_SEG, mPlib_get_player_face_pallet_p(game));
+    CLOSE_POLY_OPA_DISP(graph);
+
+    cKF_Si3_draw_R_SV(game, &p->keyframe0, p->work_mtx[buf_idx], NULL, NULL, p);
 }
 
 ACTOR_PROFILE Puppet_Profile = {
@@ -85,6 +120,77 @@ ACTOR_PROFILE Puppet_Profile = {
     &Puppet_actor_draw,
     NULL,
 };
+
+/* --- Land relay ------------------------------------------------------------
+ * The town's field-item table (Save_t.fg) is both the persistent and the live
+ * land: the loaded acres' item pointers alias it. So every change to the
+ * land, whoever or whatever made it, shows up as a changed cell there. Each
+ * frame: apply the cells other residents changed, then diff our table
+ * against a snapshot and send what changed. Applied cells go into the
+ * snapshot too, so nothing echoes back. */
+static u16 s_land_snapshot[ACNET_FG_CELLS];
+static int s_land_snapshot_valid;
+
+static void Puppet_land_sync(void) {
+    mActor_name_t* live = Save_GetFG();
+    acnet_land_cell_t buf[ACNET_LAND_MAX_CELLS];
+    int n, i, applied = 0, pending = 0;
+
+    if (!s_land_snapshot_valid) {
+        memcpy(s_land_snapshot, live, sizeof(s_land_snapshot));
+        s_land_snapshot_valid = 1;
+        OSReport("[land] watching the town's %d field cells for changes\n", ACNET_FG_CELLS);
+        return;
+    }
+
+    /* 1. Apply what the others changed. */
+    while ((n = pc_net_take_land_cells(buf, ACNET_LAND_MAX_CELLS)) > 0) {
+        for (i = 0; i < n; i++) {
+            const acnet_land_cell_t* c = &buf[i];
+            int idx;
+            if (c->fx >= ACNET_FG_BLOCK_X || c->fz >= ACNET_FG_BLOCK_Z || c->utx >= ACNET_FG_UT ||
+                c->utz >= ACNET_FG_UT) {
+                continue;
+            }
+            idx = ACNET_FG_CELL_INDEX(c->fx, c->fz, c->utx, c->utz);
+            live[idx] = (mActor_name_t)c->item;
+            s_land_snapshot[idx] = (u16)c->item;
+            applied++;
+        }
+    }
+    if (applied) {
+        /* The field-item manager rebuilds the visible acres' item actors when
+         * this flag is set, the same way the game does after a local change. */
+        if (mFI_CheckFieldData()) {
+            mFI_SetFGUpData();
+        }
+        OSReport("[land] applied %d cell change(s) from other residents\n", applied);
+    }
+
+    /* 2. Send what changed here. */
+    for (i = 0; i < ACNET_FG_CELLS; i++) {
+        if (live[i] != (mActor_name_t)s_land_snapshot[i]) {
+            acnet_land_cell_t* c = &buf[pending];
+            int cell = i % ACNET_FG_UT;
+            int row  = (i / ACNET_FG_UT) % ACNET_FG_UT;
+            int blk  = i / (ACNET_FG_UT * ACNET_FG_UT);
+            c->fx = (u8)(blk % ACNET_FG_BLOCK_X);
+            c->fz = (u8)(blk / ACNET_FG_BLOCK_X);
+            c->utx = (u8)cell;
+            c->utz = (u8)row;
+            c->item = (u16)live[i];
+            c->reserved = 0;
+            s_land_snapshot[i] = (u16)live[i];
+            if (++pending == ACNET_LAND_MAX_CELLS) {
+                pc_net_send_land_cells(buf, pending);
+                pending = 0;
+            }
+        }
+    }
+    if (pending) {
+        pc_net_send_land_cells(buf, pending);
+    }
+}
 
 /* Find the puppet actor for a given resident slot, or NULL. */
 static ACTOR* Puppet_find(GAME_PLAY* play, int slot) {
@@ -129,6 +235,13 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
             pc_save_bswap_home(Save_GetPointer(homes[slot]), PC_BSWAP_FROM_BE);
             OSReport("[puppet] resident %d's new character and house are now in this town\n", slot);
         }
+    }
+
+    /* 1c. Land: apply the others' changes, send ours. */
+    Puppet_land_sync();
+
+    if (!pc_net_puppets_enabled()) {
+        return; /* other residents not drawn; town sync is unaffected */
     }
 
     /* 2. Update existing puppets from network state, deleting those whose

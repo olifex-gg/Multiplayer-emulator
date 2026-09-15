@@ -15,6 +15,7 @@
 #define PC_NET_H
 
 #include <stddef.h>
+#include "protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +73,15 @@ int pc_net_remote_count(void);
  * town blob) and return 1. The caller writes them over that resident's
  * blocks in the running save and byte-swaps them in place. Never fires for
  * the local player's own slot. */
+/* 1 when other residents should be drawn (settings.ini show_other_players).
+ * Off leaves the shared town, saving and live resident sync fully working. */
+int pc_net_puppets_enabled(void);
+
+/* Land relay (step 3). The game sends the field-item cells that changed
+ * since the last frame and takes the cells other residents changed. */
+void pc_net_send_land_cells(const acnet_land_cell_t* cells, int count);
+int  pc_net_take_land_cells(acnet_land_cell_t* out, int max);
+
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len);
 

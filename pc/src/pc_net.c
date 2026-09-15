@@ -37,6 +37,7 @@ typedef struct {
     char   invite[ACNET_INVITE_LEN + 1];
     char   name[ACNET_NAME_LEN + 1];
     int    want_slot;          /* 0..3 or ACNET_SLOT_ANY */
+    int    puppets;            /* draw other residents (settings: show_other_players) */
 } net_config_t;
 
 static net_config_t s_cfg;
@@ -79,6 +80,23 @@ typedef struct {
     uint8_t  bytes[ACNET_RESIDENT_BLOB_SIZE]; /* Private_c then mHm_hs_c, big-endian */
 } resident_update_t;
 static resident_update_t s_resident_update[ACNET_MAX_PLAYERS];
+
+/* Land relay: cells from other residents, queued until the game applies
+ * them. A ring so a burst (someone's whole daily weed sprout) survives. */
+#define LAND_IN_CAP 2048
+static acnet_land_cell_t s_land_in[LAND_IN_CAP];
+static unsigned s_land_in_head, s_land_in_count, s_land_dropped;
+static unsigned s_land_tx, s_land_rx;
+
+static void land_in_push(const acnet_land_cell_t* c) {
+    if (s_land_in_count == LAND_IN_CAP) {
+        s_land_in_head = (s_land_in_head + 1) % LAND_IN_CAP; /* drop oldest */
+        s_land_in_count--;
+        s_land_dropped++;
+    }
+    s_land_in[(s_land_in_head + s_land_in_count) % LAND_IN_CAP] = *c;
+    s_land_in_count++;
+}
 
 /* Pending chat, drained by the game once per frame. */
 typedef struct {
@@ -136,6 +154,7 @@ static void read_config(void) {
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.port = ACNET_DEFAULT_PORT;
     s_cfg.want_slot = ACNET_SLOT_ANY;
+    s_cfg.puppets = 1;
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
         char* p = trim(line);
@@ -157,6 +176,8 @@ static void read_config(void) {
             snprintf(s_cfg.invite, sizeof(s_cfg.invite), "%s", val);
         } else if (strcmp(key, "player_name") == 0) {
             snprintf(s_cfg.name, sizeof(s_cfg.name), "%s", val);
+        } else if (strcmp(key, "show_other_players") == 0) {
+            s_cfg.puppets = atoi(val) != 0;
         } else if (strcmp(key, "resident_slot") == 0) {
             int v = atoi(val);
             if (v >= 0 && v < ACNET_MAX_PLAYERS) s_cfg.want_slot = v;
@@ -303,6 +324,21 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
                  a.by_slot, a.town_version);
         return ACNET_MSG_TOWN_VERSION;
     }
+    case ACNET_MSG_LAND_CELLS: {
+        acnet_land_hdr_t h;
+        int i;
+        if (payload_len < sizeof(h)) return -1;
+        memcpy(&h, payload, sizeof(h));
+        if (h.count == 0 || h.count > ACNET_LAND_MAX_CELLS ||
+            payload_len != sizeof(h) + (size_t)h.count * sizeof(acnet_land_cell_t)) return -1;
+        for (i = 0; i < h.count; i++) {
+            acnet_land_cell_t c;
+            memcpy(&c, payload + sizeof(h) + i * sizeof(c), sizeof(c));
+            land_in_push(&c);
+            s_land_rx++;
+        }
+        return ACNET_MSG_LAND_CELLS;
+    }
     case ACNET_MSG_RESIDENT_DATA: {
         acnet_resident_data_t r;
         if (payload_len != sizeof(r)) return -1;
@@ -424,8 +460,8 @@ int pc_net_init(void) {
         OSReport("[net] no [Network] block in settings.ini; single-player\n");
         return 0;
     }
-    OSReport("[net] init: server=%s port=%d invite=%s name=%s\n", s_cfg.host, s_cfg.port,
-             s_cfg.invite, s_cfg.name);
+    OSReport("[net] init: server=%s port=%d invite=%s name=%s show_other_players=%d\n", s_cfg.host,
+             s_cfg.port, s_cfg.invite, s_cfg.name, s_cfg.puppets);
 
     if (enet_initialize() != 0) {
         OSReport("[net] enet_initialize failed; starting in single-player\n");
@@ -505,8 +541,9 @@ void pc_net_service(void) {
     if (now - last_report >= 5000) {
         int i, n = 0;
         for (i = 0; i < ACNET_MAX_PLAYERS; i++) n += s_remote[i].active ? 1 : 0;
-        OSReport("[net] state sent=%u received=%u residents-visible=%d rtt=%ums\n", s_puppet_tx,
-                 s_puppet_rx, n, s_peer ? s_peer->roundTripTime : 0u);
+        OSReport("[net] state sent=%u received=%u residents-visible=%d land-cells sent=%u received=%u%s rtt=%ums\n",
+                 s_puppet_tx, s_puppet_rx, n, s_land_tx, s_land_rx, s_land_dropped ? " (some dropped!)" : "",
+                 s_peer ? s_peer->roundTripTime : 0u);
         last_report = now;
     }
 }
@@ -543,6 +580,37 @@ void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned a
 }
 
 int pc_net_local_slot(void) { return s_active ? s_slot : -1; }
+
+int pc_net_puppets_enabled(void) { return s_active && s_cfg.puppets; }
+
+void pc_net_send_land_cells(const acnet_land_cell_t* cells, int count) {
+    uint8_t buf[sizeof(acnet_land_hdr_t) + ACNET_LAND_MAX_CELLS * sizeof(acnet_land_cell_t)];
+    if (!s_active) return;
+    while (count > 0) {
+        int n = count > ACNET_LAND_MAX_CELLS ? ACNET_LAND_MAX_CELLS : count;
+        acnet_land_hdr_t h;
+        memset(&h, 0, sizeof(h));
+        h.count = (uint8_t)n;
+        memcpy(buf, &h, sizeof(h));
+        memcpy(buf + sizeof(h), cells, (size_t)n * sizeof(acnet_land_cell_t));
+        send_msg(ACNET_CH_CONTROL, ACNET_MSG_LAND_CELLS, buf, sizeof(h) + (size_t)n * sizeof(acnet_land_cell_t),
+                 NULL, 0, 1);
+        s_land_tx += (unsigned)n;
+        cells += n;
+        count -= n;
+    }
+}
+
+int pc_net_take_land_cells(acnet_land_cell_t* out, int max) {
+    int n = 0;
+    if (!s_active) return 0;
+    while (n < max && s_land_in_count > 0) {
+        out[n++] = s_land_in[s_land_in_head];
+        s_land_in_head = (s_land_in_head + 1) % LAND_IN_CAP;
+        s_land_in_count--;
+    }
+    return n;
+}
 
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len) {

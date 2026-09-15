@@ -233,6 +233,23 @@ int town_assign_slot(town_t* t, const char* name, int want_slot) {
     return i;
 }
 
+int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item) {
+    uint8_t* cell;
+    if (!t->data) return 0;
+    if (fx < 0 || fx >= ACNET_FG_BLOCK_X || fz < 0 || fz >= ACNET_FG_BLOCK_Z) return 0;
+    if (utx < 0 || utx >= ACNET_FG_UT || utz < 0 || utz >= ACNET_FG_UT) return 0;
+    cell = t->data + ACNET_FG_CELL_ABS(fx, fz, utx, utz);
+    cell[0] = (uint8_t)(item >> 8);
+    cell[1] = (uint8_t)(item & 0xFF);
+    return 1;
+}
+
+int town_flush(town_t* t) {
+    if (!t->data) return 0;
+    town_fix_payload(t->data + ACNET_GCI_HEADER_SIZE);
+    return write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, t->data, ACNET_TOWN_SIZE) == 0;
+}
+
 int town_validate_blob(const uint8_t* blob, size_t len) {
     if (len != ACNET_TOWN_SIZE) return 0;
     /* CARDDir.gameName: "GAF" + region letter (GAFE for USA) */

@@ -43,10 +43,14 @@ typedef struct {
 } client_t;
 
 typedef struct {
-    int    in_use;
-    town_t town;
-    int    authority_id;      /* client id, 0 = none */
+    int      in_use;
+    town_t   town;
+    int      authority_id;    /* client id, 0 = none */
+    int      land_dirty;      /* live land edits not yet written to disk */
+    uint32_t land_dirty_ms;   /* when the first unflushed edit landed */
 } room_t;
+
+#define LAND_FLUSH_MS 5000
 
 static client_t g_clients[ACNET_MAX_CLIENTS];
 static room_t   g_rooms[MAX_TOWNS];
@@ -460,6 +464,52 @@ static void handle_player_state(client_t* c, const uint8_t* payload, size_t len)
     room_broadcast(c->room, c, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &s, sizeof(s), 0);
 }
 
+/* Land relay: apply a client's changed field-item cells to the stored town
+ * and pass them on to everyone else in the room, in arrival order. */
+static void handle_land_cells(client_t* c, const uint8_t* payload, size_t len) {
+    acnet_land_hdr_t h;
+    const acnet_land_cell_t* cells;
+    room_t* r;
+    int i, applied = 0;
+    if (g_verbose) logf_("land packet from client %d: len=%zu logged_in=%d", c->id, len, c->logged_in);
+    if (!c->logged_in || len < sizeof(h)) return;
+    memcpy(&h, payload, sizeof(h));
+    if (h.count == 0 || h.count > ACNET_LAND_MAX_CELLS) { if (g_verbose) logf_("  bad count %u", h.count); return; }
+    if (len != sizeof(h) + (size_t)h.count * sizeof(acnet_land_cell_t)) { if (g_verbose) logf_("  bad len for count %u", h.count); return; }
+    cells = (const acnet_land_cell_t*)(payload + sizeof(h));
+    r = &g_rooms[c->room];
+    for (i = 0; i < h.count; i++) {
+        acnet_land_cell_t cell;
+        memcpy(&cell, &cells[i], sizeof(cell));
+        if (town_set_land_cell(&r->town, cell.fx, cell.fz, cell.utx, cell.utz, cell.item)) applied++;
+    }
+    if (applied && !r->land_dirty) {
+        r->land_dirty = 1;
+        r->land_dirty_ms = enet_time_get();
+    }
+    room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_LAND_CELLS, payload, len, 1);
+    if (g_verbose) logf_("[%s] %s changed %u land cell(s)", r->town.invite, c->name, h.count);
+}
+
+/* Write live land edits to disk at most every LAND_FLUSH_MS, or at once
+ * when forced (shutdown). */
+static void land_flush_tick(int force) {
+    uint32_t now = enet_time_get();
+    int i;
+    for (i = 0; i < MAX_TOWNS; i++) {
+        room_t* r = &g_rooms[i];
+        if (!r->in_use || !r->land_dirty) continue;
+        if (!force && now - r->land_dirty_ms < LAND_FLUSH_MS) continue;
+        if (town_flush(&r->town)) {
+            r->land_dirty = 0;
+            if (g_verbose) logf_("[%s] land edits written to disk", r->town.invite);
+        } else {
+            logf_("[%s] FAILED to write land edits to disk", r->town.invite);
+            r->land_dirty_ms = now; /* retry later */
+        }
+    }
+}
+
 static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     acnet_ping_t p;
     acnet_pong_t r;
@@ -542,6 +592,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_PLAYER_STATE: handle_player_state(c, payload, payload_len); break;
     case ACNET_MSG_PING:         handle_ping(c, payload, payload_len); break;
     case ACNET_MSG_STATUS_REQUEST: handle_status_request(c, payload, payload_len); break;
+    case ACNET_MSG_LAND_CELLS:   handle_land_cells(c, payload, payload_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;
@@ -667,6 +718,7 @@ int main(int argc, char** argv) {
             logf_("enet_host_service error");
             break;
         }
+        land_flush_tick(0);
         if (rc == 0) continue;
         switch (ev.type) {
         case ENET_EVENT_TYPE_CONNECT: {
@@ -700,6 +752,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    land_flush_tick(1);
     logf_("shutting down");
     for (i = 0; i < ACNET_MAX_CLIENTS; i++) {
         if (g_clients[i].in_use && g_clients[i].peer) enet_peer_disconnect(g_clients[i].peer, 0);

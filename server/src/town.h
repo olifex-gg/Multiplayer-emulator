@@ -48,6 +48,15 @@ int town_validate_blob(const uint8_t* blob, size_t len);
  * or 0 on failure. */
 uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob);
 
+/* Write one field-item cell into the stored town (big-endian). Returns 1 if
+ * written, 0 when there is no town yet or the indices are out of range. The
+ * caller persists later with town_flush(). */
+int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item);
+
+/* Recompute the checksum, mirror main -> backup and write the town to disk.
+ * Used after live land edits; does not bump the version or rotate backups. */
+int town_flush(town_t* t);
+
 /* Big-endian 16-bit two's complement checksum as used by the game's save
  * check. Computed over the whole Save_t with the checksum field zeroed. */
 uint16_t town_checksum_be(const uint8_t* data, size_t size);

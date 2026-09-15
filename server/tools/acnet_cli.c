@@ -153,6 +153,20 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         printf("PONG nonce=%u server_ms=%lld\n", p.nonce, (long long)p.server_unix_ms);
         break;
     }
+    case ACNET_MSG_LAND_CELLS: {
+        acnet_land_hdr_t h;
+        int i;
+        if (payload_len < sizeof(h)) return 0;
+        memcpy(&h, payload, sizeof(h));
+        printf("LAND count=%u", h.count);
+        for (i = 0; i < h.count && sizeof(h) + (i + 1) * sizeof(acnet_land_cell_t) <= payload_len; i++) {
+            acnet_land_cell_t c;
+            memcpy(&c, payload + sizeof(h) + i * sizeof(c), sizeof(c));
+            printf(" cell=%u,%u,%u,%u,%u", c.fx, c.fz, c.utx, c.utz, c.item);
+        }
+        printf("\n");
+        break;
+    }
     case ACNET_MSG_RESIDENT_DATA: {
         acnet_resident_data_t r;
         if (payload_len != sizeof(r)) return 0;
@@ -232,7 +246,8 @@ static void usage(void) {
             "                 [--download FILE] [--upload FILE] [--reason save|leave|periodic|new]\n"
             "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n"
             "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n"
-            "       ... --state X,Y,Z      send one player-state packet after login\n");
+            "       ... --state X,Y,Z      send one player-state packet after login\n"
+            "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
 }
 
 int main(int argc, char** argv) {
@@ -243,6 +258,7 @@ int main(int argc, char** argv) {
     const char* upload = NULL;
     const char* chat = NULL;
     const char* state = NULL;
+    const char* land = NULL;
     int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -263,6 +279,7 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--upload") == 0 && v) { upload = v; i++; }
         else if (strcmp(a, "--chat") == 0 && v) { chat = v; i++; }
         else if (strcmp(a, "--state") == 0 && v) { state = v; i++; }
+        else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
         else if (strcmp(a, "--status") == 0) { do_status = 1; }
@@ -327,6 +344,17 @@ int main(int argc, char** argv) {
         ps.seq = 1;
         ps.anim_index = 7;
         send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
+        enet_host_flush(host);
+    }
+    if (land) {
+        struct { acnet_land_hdr_t h; acnet_land_cell_t c; } ACNET_PACKED pk;
+        unsigned fx = 0, fz = 0, utx = 0, utz = 0, item = 0;
+        memset(&pk, 0, sizeof(pk));
+        sscanf(land, "%u,%u,%u,%u,%u", &fx, &fz, &utx, &utz, &item);
+        pk.h.count = 1;
+        pk.c.fx = (uint8_t)fx; pk.c.fz = (uint8_t)fz; pk.c.utx = (uint8_t)utx; pk.c.utz = (uint8_t)utz;
+        pk.c.item = (uint16_t)item;
+        send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_LAND_CELLS, &pk, sizeof(pk), NULL, 0, 1);
         enet_host_flush(host);
     }
     if (download) {

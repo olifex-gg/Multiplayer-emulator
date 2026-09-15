@@ -48,10 +48,25 @@
 #define ACNET_HOME_ARRAY_OFFSET    0x9CE8        /* Save_t.homes[PLAYER_NUM] */
 #define ACNET_HOME_SIZE            0x26B0        /* sizeof(mHm_hs_c) */
 
+/* Field-item table inside Save_t (Save_t.fg): the town's 6 x 5 acres, each
+ * 16 x 16 cells of u16 item ids -- trees, flowers, weeds, dropped items,
+ * holes, buried things. The loaded field's item data aliases this table
+ * directly, so it is both the persistent and the live state. */
+#define ACNET_FG_OFFSET     0x137A8   /* Save_t.fg, relative to Save_t */
+#define ACNET_FG_BLOCK_X    5
+#define ACNET_FG_BLOCK_Z    6
+#define ACNET_FG_UT         16
+#define ACNET_FG_CELLS      (ACNET_FG_BLOCK_X * ACNET_FG_BLOCK_Z * ACNET_FG_UT * ACNET_FG_UT) /* 7680 */
+#define ACNET_FG_SIZE       (ACNET_FG_CELLS * 2)                                              /* 0x3C00 */
+
 /* Absolute offsets inside the town blob for resident slot i. */
 #define ACNET_SAVE_MAIN_ABS   (ACNET_GCI_HEADER_SIZE + ACNET_SAVE_MAIN_OFFSET)
 #define ACNET_PRIVATE_OFFSET(i) (ACNET_SAVE_MAIN_ABS + ACNET_PRIVATE_ARRAY_OFFSET + (i) * ACNET_PRIVATE_SIZE)
 #define ACNET_HOME_OFFSET(i)    (ACNET_SAVE_MAIN_ABS + ACNET_HOME_ARRAY_OFFSET + (i) * ACNET_HOME_SIZE)
+#define ACNET_FG_ABS            (ACNET_SAVE_MAIN_ABS + ACNET_FG_OFFSET)
+#define ACNET_FG_CELL_INDEX(fx, fz, utx, utz) \
+    ((((fz) * ACNET_FG_BLOCK_X + (fx)) * ACNET_FG_UT + (utz)) * ACNET_FG_UT + (utx))
+#define ACNET_FG_CELL_ABS(fx, fz, utx, utz) (ACNET_FG_ABS + ACNET_FG_CELL_INDEX(fx, fz, utx, utz) * 2)
 
 /* --- Message ids --- */
 enum acnet_msg {
@@ -72,7 +87,8 @@ enum acnet_msg {
     ACNET_MSG_TOWN_VERSION  = 15, /* S->C  acnet_town_ack_t: someone else's upload landed */
     ACNET_MSG_STATUS_REQUEST = 16,/* C->S  acnet_status_request_t (pre-login, claims nothing) */
     ACNET_MSG_STATUS_REPLY   = 17,/* S->C  acnet_status_reply_t */
-    ACNET_MSG_RESIDENT_DATA  = 18 /* S->C  acnet_resident_data_t + ACNET_RESIDENT_BLOB_SIZE bytes */
+    ACNET_MSG_RESIDENT_DATA  = 18,/* S->C  acnet_resident_data_t + ACNET_RESIDENT_BLOB_SIZE bytes */
+    ACNET_MSG_LAND_CELLS     = 19 /* C->S->C acnet_land_hdr_t + count * acnet_land_cell_t */
 };
 
 enum acnet_reject_reason {
@@ -212,6 +228,27 @@ typedef struct ACNET_PACKED {
     uint8_t  reserved[3];
     uint32_t town_version;
 } acnet_resident_data_t;
+
+/* Land relay (step 3). A client sends the field-item cells that changed in
+ * its town since the last frame, whatever changed them: a chopped tree, a
+ * dropped item, a dug hole, a planted flower, or the game's own growth. The
+ * server writes them into the stored town (so a late joiner gets the current
+ * land) and relays them to the others, who write them into their running
+ * town and refresh the field. item is the game's mActor_name_t for the cell,
+ * carried little-endian like every other field and stored big-endian in the
+ * blob. Ordered and reliable, so the last writer wins consistently. */
+#define ACNET_LAND_MAX_CELLS 48
+typedef struct ACNET_PACKED {
+    uint8_t count;        /* 1..ACNET_LAND_MAX_CELLS cells follow */
+    uint8_t reserved[3];
+} acnet_land_hdr_t;
+
+typedef struct ACNET_PACKED {
+    uint8_t  fx, fz;      /* acre in the fg table: 0..4, 0..5 */
+    uint8_t  utx, utz;    /* cell within the acre: 0..15 */
+    uint16_t item;
+    uint16_t reserved;
+} acnet_land_cell_t;
 
 /* Puppet stream (step 2). Sent by each client at 20-30 Hz, relayed to the
  * others. area identifies the field or room so puppets are only drawn when
