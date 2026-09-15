@@ -461,7 +461,13 @@ add_executable(ac_pc
 )
 
 # Link SDL2 without SDL2main (we define SDL_MAIN_HANDLED)
-if(TARGET SDL2::SDL2)
+# On Windows prefer the static library when the SDL2 package provides one, so
+# AnimalCrossing.exe is a single file with no SDL2.dll to ship beside it.
+option(AC_SDL2_STATIC "Link SDL2 statically when a static target is available" ${WIN32})
+if(AC_SDL2_STATIC AND TARGET SDL2::SDL2-static)
+    message(STATUS "SDL2: linking statically (SDL2::SDL2-static)")
+    target_link_libraries(ac_pc glad enet SDL2::SDL2-static)
+elseif(TARGET SDL2::SDL2)
     target_link_libraries(ac_pc glad enet SDL2::SDL2)
 else()
     list(FILTER SDL2_LIBRARIES EXCLUDE REGEX "SDL2main")

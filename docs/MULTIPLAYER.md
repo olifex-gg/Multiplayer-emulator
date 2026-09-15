@@ -224,10 +224,17 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   furniture, shows up for the others as soon as they save, with no relaunch. Land changes
   (trees, items, flowers) are still the event relay to come.
 
-What step 1 does **not** yet do: show a second character (that is step 2, the puppet actor),
-apply incoming player-state or chat (counted but not yet rendered), or converge live town
-changes (step 3). Today two people can load the same town as different residents from the
-server and save it back safely; they will not see each other move until step 2.
+- **Puppet actor (step 2, first cut).** Another resident is drawn as a second
+  `PLAYER_ACTOR` driven by their streamed position and facing. It is registered in
+  `ACTOR_PART_UNUSED`, the one actor part nothing in the game claims: the player part
+  would make `GET_PLAYER_ACTOR_NOW()` return it, and the NPC part crashed the game because
+  villager code casts every entry of that list to `NPC_ACTOR*` (see `docs/HANDOFF.md`).
+  It draws the skeleton directly with no per-joint callbacks, shares the local player's
+  texture bank, stands in the bind pose and has no collision — animation, outfit and
+  collision are the next iterations.
+
+What is **not** there yet: puppet animation and outfits, chat (counted but not rendered),
+the shared clock, and the acre-ownership part of convergence (step 3).
 
 ### Not doing (and why)
 

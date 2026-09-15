@@ -1,9 +1,19 @@
 /* m_puppet.c_inc - networked puppet residents (multiplayer fork).
  *
  * Included at the END of m_player.c so it can reuse the file's static player
- * helpers and the player model. A puppet is a PLAYER_ACTOR instance placed in
- * the NPC actor part (so nothing that looks up "the player" finds it, and so
- * it keeps updating even when off-screen), driven entirely by network state.
+ * helpers and the player model. A puppet is a PLAYER_ACTOR instance driven
+ * entirely by network state.
+ *
+ * WHICH ACTOR PART IT LIVES IN MATTERS. Actor parts are types: gameplay code
+ * walks a part's list and blindly casts every entry to that part's struct.
+ * The player part would make GET_PLAYER_ACTOR_NOW() find a puppet; the NPC
+ * part crashed the game because aNPC_greeting_area_check (run by every
+ * villager every frame) cast the puppet to NPC_ACTOR* and dereferenced a
+ * pointer field that, in a PLAYER_ACTOR, is the float 1.0f. The puppet
+ * therefore lives in ACTOR_PART_UNUSED: no profile in the game uses it, and
+ * an audit of every reader of that list (the generic loops in m_actor.c and
+ * m_camera2.c, and aINS_get_stress in ac_insect_move.c_inc) found they only
+ * touch the common ACTOR header. Do not move it without repeating that audit.
  *
  * FIRST CUT (step 2, milestone 1): position and facing sync only. The puppet
  * stands in the player's bind pose and slides/turns to match the remote
@@ -20,6 +30,7 @@
 #include "m_field_info.h"
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
+#define PUPPET_ACTOR_PART ACTOR_PART_UNUSED /* see the header comment before changing */
 
 /* Construct the body skeleton the way the player does, but WITHOUT the global
  * side effects (no balloon child actor, no player_actor_exists flag, no camera
@@ -109,8 +120,11 @@ static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
 
 ACTOR_PROFILE Puppet_Profile = {
     mAc_PROFILE_PUPPET,
-    ACTOR_PART_NPC,
-    0,
+    PUPPET_ACTOR_PART,
+    /* Outside the NPC part an actor's move proc only runs while it is in
+     * view or carries this flag; a puppet must keep tracking its resident
+     * off-screen so it is in the right place when it comes back into view. */
+    ACTOR_STATE_NO_MOVE_WHILE_CULLED,
     EMPTY_NO,
     ACTOR_OBJ_BANK_KEEP,
     sizeof(PLAYER_ACTOR),
@@ -194,7 +208,7 @@ static void Puppet_land_sync(void) {
 
 /* Find the puppet actor for a given resident slot, or NULL. */
 static ACTOR* Puppet_find(GAME_PLAY* play, int slot) {
-    ACTOR* a = play->actor_info.list[ACTOR_PART_NPC].actor;
+    ACTOR* a = play->actor_info.list[PUPPET_ACTOR_PART].actor;
     while (a != NULL) {
         if (a->id == PUPPET_PROFILE_ID && a->actor_specific == slot) {
             return a;
@@ -247,7 +261,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     /* 2. Update existing puppets from network state, deleting those whose
      *    resident has gone. Capture next_actor before any delete. */
     {
-        ACTOR* a = play->actor_info.list[ACTOR_PART_NPC].actor;
+        ACTOR* a = play->actor_info.list[PUPPET_ACTOR_PART].actor;
         while (a != NULL) {
             ACTOR* next = a->next_actor;
             if (a->id == PUPPET_PROFILE_ID) {
