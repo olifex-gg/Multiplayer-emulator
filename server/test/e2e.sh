@@ -22,12 +22,25 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*"; echo "--- server log ---"; cat "$TMP/server.log" || true; exit 1; }
 cli() { "$CLI" --server 127.0.0.1 --port "$PORT" --invite "$INVITE" --quiet "$@"; }
 
+# Wait until the server has actually bound its port before any client talks to
+# it. A fixed short sleep is not enough on Windows, where a UDP packet sent to
+# a port nobody listens on yet comes back as an ICMP error that aborts the
+# client's socket, so the first connect attempt fails outright.
+wait_for_server() {
+    local i
+    for i in $(seq 1 100); do
+        kill -0 "$SPID" 2>/dev/null || fail "server did not start"
+        grep -q "listening on UDP" "$TMP/server.log" 2>/dev/null && return 0
+        sleep 0.1
+    done
+    fail "server never reported listening"
+}
+
 mkdir -p "$TMP/data"
 echo "$INVITE" > "$TMP/data/invites.txt"
 "$SERVER" --port "$PORT" --data "$TMP/data" --verbose > "$TMP/server.log" 2>&1 &
 SPID=$!
-sleep 0.5
-kill -0 "$SPID" || fail "server did not start"
+wait_for_server
 
 echo "1. wrong invite is rejected"
 out=$("$CLI" --server 127.0.0.1 --port "$PORT" --invite nope --name alice --quiet || true)
@@ -102,7 +115,7 @@ echo "12. server persists across restart"
 kill "$SPID"; wait "$SPID" 2>/dev/null || true
 "$SERVER" --port "$PORT" --data "$TMP/data" > "$TMP/server.log" 2>&1 &
 SPID=$!
-sleep 0.5
+wait_for_server
 out=$(cli --name carol --download "$TMP/dl_after.gci")
 grep -q "WELCOME client_id=[0-9]* slot=2 .*town_present=1 version=2" <<<"$out" || fail "after restart: $out"
 cmp "$TMP/dl_after.gci" "$TMP/dl_alice2.gci" || fail "town changed across restart"

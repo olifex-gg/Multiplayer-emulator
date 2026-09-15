@@ -35,6 +35,14 @@ static void path_join(char* out, size_t out_size, const char* dir, const char* f
     snprintf(out, out_size, "%s/%s", dir, file);
 }
 
+static int is_sep(char c) {
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
 static int mkdir_p(const char* path) {
     char tmp[TOWN_DIR_MAX];
     size_t len = strlen(path);
@@ -42,10 +50,13 @@ static int mkdir_p(const char* path) {
     if (len == 0 || len >= sizeof(tmp)) return -1;
     memcpy(tmp, path, len + 1);
     for (i = 1; i < len; i++) {
-        if (tmp[i] == '/') {
+        if (is_sep(tmp[i])) {
+            char sep = tmp[i];
+            /* "D:" is a drive, not a directory; _mkdir on it fails without EEXIST. */
+            if (i == 2 && tmp[1] == ':') continue;
             tmp[i] = '\0';
             if (acnet_mkdir(tmp) != 0 && errno != EEXIST) return -1;
-            tmp[i] = '/';
+            tmp[i] = sep;
         }
     }
     if (acnet_mkdir(tmp) != 0 && errno != EEXIST) return -1;

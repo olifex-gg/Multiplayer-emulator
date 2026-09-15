@@ -45,11 +45,22 @@ by CMake on purpose.
 Native on Windows, from an **MSYS2 MINGW32** shell (not MINGW64):
 
 ```bash
-pacman -S mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-SDL2 mingw-w64-i686-make ninja
+pacman -S mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-make mingw-w64-i686-SDL2 python diffutils
 cmake -S pc -B pc/build32 -G Ninja && cmake --build pc/build32 -j
 cmake -S server -B server/build -G Ninja && cmake --build server/build -j
 bash launcher/build-windows.sh            # -> AnimalCrossingOnline.exe
 ```
+
+(`python` and `diffutils` are only for the server test suite.) On Windows the game links
+SDL2 statically (`AC_SDL2_STATIC`, default on), so `AnimalCrossing.exe` is one file.
+
+**On the user's own PC** (sessions run there since Sept 2026), MSYS2 lives at `D:\msys64`
+and is not on PATH. From PowerShell, run any of the above as
+`$env:MSYSTEM="MINGW32"; & D:\msys64\usr\bin\bash.exe -lc "cd /c/Users/owenq/Documents/GitHub/Multiplayer-emulator && <command>"`.
+The game folder is `D:\Downloads\ACPC`; copy new exes there (keeping a copy of the old
+ones in a dated `old-build-...` subfolder first) and read `aclog.txt` there directly.
+Anything installed for this project goes on `D:` and is removed when the user says the
+project is done.
 
 The game needs `shaders/` and `rom/<disc image>` beside the exe at runtime.
 
@@ -74,6 +85,11 @@ and catches most mistakes, but only the Windows build is what the user runs.
   repair, the four-resident limit, chat, authority migration, restart persistence, the
   lobby status query, live resident sync and the land relay. **Add a case for every new
   protocol message.** `server/tools/acnet_cli.c` is the scriptable client it drives.
+  On the user's PC, Windows Firewall silently *blocks* a server exe it has not seen before
+  (it auto-created Block rules for `server/build/acnet_server.exe`), so `ctest` times out
+  there. Run the suite against the copy the user already allowed instead:
+  `bash server/test/e2e.sh /d/Downloads/ACPC/acnet_server.exe server/build/acnet_cli.exe`.
+  Do not change firewall rules yourself; that is the user's security setting.
 - The launcher can be smoke-tested headlessly under Wine with a virtual display — see
   `docs/HANDOFF.md`. Do this before sending a launcher build; it has already caught a
   crash that would otherwise have reached the user.

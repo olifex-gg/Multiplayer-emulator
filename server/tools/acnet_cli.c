@@ -402,7 +402,12 @@ int main(int argc, char** argv) {
     }
 
 done:
-    enet_peer_disconnect(peer, 0);
+    /* Disconnect only once everything we sent has been acknowledged. A plain
+     * enet_peer_disconnect right after a send can put the packet and the
+     * DISCONNECT in front of the server in the same service pass, and ENet
+     * drops a peer's undelivered packets when it handles the DISCONNECT --
+     * which lost the land cell in the e2e suite on a fast machine. */
+    enet_peer_disconnect_later(peer, 0);
     {
         uint32_t end = enet_time_get() + 1000;
         while ((int32_t)(end - enet_time_get()) > 0 && enet_host_service(host, &ev, 100) >= 0) {
