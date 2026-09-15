@@ -4,9 +4,12 @@ Written at the end of the first long build-and-playtest session and updated sinc
 fresh session can pick up without re-deriving anything. `CLAUDE.md` has the standing
 rules; this file has the situation. `docs/MULTIPLAYER.md` has the design reasoning.
 
-**Last updated 2026-09-14 (late evening), the first session on the user's own PC.** The
-puppet crash below is fixed in source and built; the build is in the user's game folder
-but has not been played yet. See "The puppet crash" for what to look for.
+**Last updated 2026-09-15 (early morning), the first session on the user's own PC.** The
+puppet crash below is fixed, built, and **confirmed on the real game here**: a scratch copy
+of the game was driven to the field and a fake second resident was logged in with the CLI;
+the puppet was created, drawn, kept for 30+ s, removed when she left and re-created when
+she returned, with the game alive throughout (see "Playtesting without a friend"). The
+build is in the user's game folder; the friend needs the same `AnimalCrossing.exe`.
 
 ## Where things actually stand
 
@@ -25,8 +28,9 @@ Two people on two PCs, in different houses, have played in the same town. That m
 
 **Built but never seen working**
 
-- **Seeing each other.** Crashed the game until 2026-09-14; the cause is fixed (see
-  below) and the fix is built and in the user's folder, but nobody has played it yet.
+- **Seeing each other.** Crashed the game until 2026-09-14; fixed, and confirmed with a
+  fake second resident on 2026-09-15 (below). Not yet seen with two real people, and the
+  puppet is still an unanimated body in the local player's clothes.
 - **Live resident sync** — when a resident saves, their character and house are pushed to
   everyone else's *running* game. Shipped to the user, never confirmed, because the crash
   below got in the way.
@@ -99,15 +103,19 @@ profile sets that flag; and `Actor_ct`/`mNpc_SetNpcinfo` no longer run their NPC
 texture-bank and animal-info code on the puppet, which they had been doing with
 `npc_id == EMPTY_NO`. The reasoning is also in the header comment of `m_puppet.c_inc`.
 
-**What to look for in the next `aclog.txt`:** after `[puppet] resident N appeared`, the
-line `[puppet] first draw (resident N)` must appear and the game must keep running. If it
-crashes again, the crash handler's module + offset is the next lead; map it with
-`objdump -d` on the exact exe as before. Both players need the new `AnimalCrossing.exe`
-— the crash is in whichever game *draws* the other person.
+**Confirmed 2026-09-15 on this PC** (see "Playtesting without a friend"): `[puppet] ct`,
+`resident 0 appeared`, `[puppet] first draw (resident 0)`, 30+ s alive with
+`residents-visible=1`, `resident 0 left; removing puppet`, and a clean re-creation when
+she came back. No crash. Both players still need the new `AnimalCrossing.exe` — the crash
+was in whichever game *draws* the other person.
 
-**Still true after the fix:** the puppet stands in the bind pose (no walking animation),
-wears the local player's outfit and face (one texture bank), and has no collision, so
-villagers walk through it. Those are the next iterations of step 2.
+**Still true after the fix:** the puppet is drawn with whatever is in its never-computed
+`work_mtx`, so it appears as a stiff body at an odd angle rather than standing (the
+player's move proc is what plays the keyframe animation and builds those matrices — the
+puppet's does nothing yet). It wears the local player's outfit and face (one texture
+bank) and has no collision, so villagers walk through it. Next iterations of step 2, in
+order: play the wait/walk animation on the puppet's skeleton from the streamed
+`anim_index`/`frame` so it stands and walks; then per-puppet textures.
 
 ## Things that already bit us
 
@@ -165,6 +173,41 @@ notes, all learned the hard way in the first evening:
   the `--data` path) before assuming the port is free, and never kill one whose `--data`
   is `serverdata` — that is the user's, started by the launcher.
 - **Build outputs** (`pc/build32`, `server/build`, `*.exe`) are git-ignored.
+
+## Playtesting without a friend (on the user's PC)
+
+The game *can* be run and driven here, so "cannot be verified" no longer applies to the
+in-game side. The recipe that confirmed the puppet fix:
+
+1. **Scratch copy of the game folder, `D:\Downloads\ACPC-test`** (exists; rebuild it from
+   `D:\Downloads\ACPC` if missing): the exe, `shaders\`, `rom\`, `keybindings.ini`, a copy
+   of `save\card_a\DobutsunomoriP_MURA.gci`, a copy of `serverdata\` (so the test server
+   knows the same residents: `0 Alana`, `1 Owen`), and `settings.ini` edited to
+   `fullscreen = 0`, `window_width/height = 1280/720`, `disable_resetti = 1` (skips the
+   Resetti lecture after a crash) and `server_port = 7778`. The real folder is untouched.
+2. **Server:** run the *allowed* exe with test data:
+   `D:\Downloads\ACPC\acnet_server.exe --port 7778 --data D:\Downloads\ACPC-test\serverdata --verbose`
+   (Windows Firewall blocks any other copy; see above).
+3. **Game:** `Start-Process D:\Downloads\ACPC-test\AnimalCrossing.exe -WorkingDirectory D:\Downloads\ACPC-test`
+   — the working directory is where it looks for `save/`, `rom/` and writes `aclog.txt`.
+4. **Drive it with `pc/tools/gamekeys.ps1`.** `SetForegroundWindow` is refused from a
+   background script, so use the `ptap`/`phold` commands, which post `WM_KEYDOWN/UP` to the
+   game window and work without focus: `gamekeys.ps1 ptap Return` (Start),
+   `ptap Space 80 2 1200` (A twice), `phold D 700` (walk right), `shot out.png`
+   (screenshot of the window; `move 0 0 1000 620` first to get it clear of other windows).
+   Title → Return; Egbert's dialogue → Space repeatedly (about eight); the name menu offers
+   "Owen / I'm new" with the cursor on Owen; then "getting Nookton ready" → Space → the
+   field, standing outside the house. Screenshot after every step: the dialogue is timed
+   and a menu choice made blind is how you end up playing the wrong resident.
+5. **Fake resident:** read Owen's position from a listener, then stand Alana next to him:
+   `acnet_cli --server 127.0.0.1 --port 7778 --invite 3hwybg --name Alana --wait 4`
+   prints `STATE ... pos=x,y,z`; then
+   `acnet_cli ... --name Alana --state x+60,y,z+20 --state-every 200 --wait 150`
+   keeps her there (the game forgets a resident after 3 s of silence; `--state-every`
+   exists for this). Watch `aclog.txt` for the `[puppet]` lines and take a `shot`.
+   Killing the CLI is the "friend left" test; running it again is "friend came back".
+6. Kill the game, the server and any `acnet_cli` afterwards (`Get-Process` by name; the
+   server's command line shows the `--data` path so you never kill the user's own).
 
 ## Testing the launcher headlessly (Linux)
 

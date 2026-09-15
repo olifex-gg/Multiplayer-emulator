@@ -247,6 +247,8 @@ static void usage(void) {
             "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n"
             "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n"
             "       ... --state X,Y,Z      send one player-state packet after login\n"
+            "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
+            "                              so a running game keeps drawing this fake resident\n"
             "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
 }
 
@@ -260,6 +262,8 @@ int main(int argc, char** argv) {
     const char* state = NULL;
     const char* land = NULL;
     int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
+    int state_every_ms = 0;
+    acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
     ENetPeer* peer;
@@ -279,6 +283,7 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--upload") == 0 && v) { upload = v; i++; }
         else if (strcmp(a, "--chat") == 0 && v) { chat = v; i++; }
         else if (strcmp(a, "--state") == 0 && v) { state = v; i++; }
+        else if (strcmp(a, "--state-every") == 0 && v) { state_every_ms = atoi(v); i++; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -337,9 +342,8 @@ int main(int argc, char** argv) {
     if (rc == ACNET_MSG_REJECT) { exit_code = 1; goto done; }
     if (rc <= 0) { exit_code = 3; goto done; }
 
+    memset(&ps, 0, sizeof(ps));
     if (state) {
-        acnet_player_state_t ps;
-        memset(&ps, 0, sizeof(ps));
         sscanf(state, "%f,%f,%f", &ps.x, &ps.y, &ps.z);
         ps.seq = 1;
         ps.anim_index = 7;
@@ -395,8 +399,21 @@ int main(int argc, char** argv) {
     }
     if (wait_secs > 0) {
         uint32_t end = enet_time_get() + (uint32_t)wait_secs * 1000u;
+        uint32_t next_state = enet_time_get();
         while ((int32_t)(end - enet_time_get()) > 0) {
-            rc = wait_for(host, peer, 0, end - enet_time_get(), NULL);
+            uint32_t now = enet_time_get();
+            uint32_t slice = end - now;
+            /* A game forgets a resident whose state is older than a few
+             * seconds, so a fake resident has to keep talking to stay drawn. */
+            if (state && state_every_ms > 0) {
+                if ((int32_t)(next_state - now) <= 0) {
+                    ps.seq++;
+                    send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
+                    next_state = now + (uint32_t)state_every_ms;
+                }
+                if (next_state - now < slice) slice = next_state - now;
+            }
+            rc = wait_for(host, peer, 0, slice, NULL);
             if (rc < 0) break;
         }
     }

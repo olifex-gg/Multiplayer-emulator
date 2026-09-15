@@ -93,8 +93,12 @@ and catches most mistakes, but only the Windows build is what the user runs.
 - The launcher can be smoke-tested headlessly under Wine with a virtual display — see
   `docs/HANDOFF.md`. Do this before sending a launcher build; it has already caught a
   crash that would otherwise have reached the user.
-- The game itself cannot be run here (no GPU/display, and no disc image). Reason about it
-  from the source, and lean on `aclog.txt` from the user.
+- **On the user's PC the game can be run and driven.** `docs/HANDOFF.md` ("Playtesting
+  without a friend") has the recipe: a scratch copy of the game folder, a test server on
+  another port, `pc/tools/gamekeys.ps1` to post keystrokes and take screenshots, and
+  `acnet_cli --state ... --state-every` to stand in as a second resident. Use it before
+  telling the user something works. In a cloud session (no GPU, no disc image) reason
+  from the source and lean on `aclog.txt` from the user.
 
 ## Hard-won rules
 
