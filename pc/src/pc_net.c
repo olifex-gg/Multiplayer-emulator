@@ -48,6 +48,7 @@ static int          s_authority_id = -1;
 static int          s_self_id = -1;
 static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
 static uint32_t     s_town_version;
+static int          s_town_present;     /* the server had a town when we logged in */
 static unsigned     s_puppet_rx;       /* diagnostic counters */
 static unsigned     s_chat_rx;
 
@@ -258,6 +259,7 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         if (payload_len != sizeof(d)) return -1;
         memcpy(&d, payload, sizeof(d));
         s_town_version = d.town_version;
+        s_town_present = d.present && blob_len == ACNET_TOWN_SIZE;
         if (d.present && blob_len == ACNET_TOWN_SIZE) {
             if (write_town_file(blob, blob_len) == 0) {
                 OSReport("[net] downloaded town v%u into %s\n", d.town_version, NET_GCI_PATH);
@@ -438,6 +440,23 @@ int pc_net_init(void) {
         return 0;
     }
     s_active = 1;
+
+    if (!s_town_present) {
+        /* The server has no town yet. If this PC already has one, it becomes
+         * the shared town right now, before the game even starts, so a host's
+         * existing town is on the server before any friend enters. Waiting
+         * for the host's first in-game save left a window in which a joiner
+         * would start a brand-new town and found the server with that. */
+        FILE* f = fopen(NET_GCI_PATH, "rb");
+        if (f) {
+            fclose(f);
+            OSReport("[net] server has no town yet; uploading this PC's town to found it\n");
+            pc_net_on_saved(ACNET_UPLOAD_NEW_TOWN);
+        } else {
+            OSReport("[net] server has no town yet and this PC has none either; "
+                     "this client will found it on first save\n");
+        }
+    }
     return 1;
 }
 

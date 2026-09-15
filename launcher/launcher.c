@@ -874,11 +874,15 @@ static void lobby_refresh(void) {
 
     if (state != LOBBY_OK || !have) {
         g_lbv.town_text[0] = '\0';
-    } else if (!r.room_known) {
-        lstrcpynA(g_lbv.town_text, "This town has not been started yet. Enter and save once to create it.",
-                  sizeof(g_lbv.town_text));
-    } else if (!r.town_present) {
-        lstrcpynA(g_lbv.town_text, "Nobody has saved yet - the first person to save creates the town.",
+    } else if (!r.room_known || !r.town_present) {
+        /* No town on the server yet. The host's game puts theirs there the
+         * moment it starts, so for a host this is "go ahead"; for a joiner
+         * it means the host has not entered yet, and entering now would
+         * start a separate, brand-new town. */
+        lstrcpynA(g_lbv.town_text,
+                  g_lb_is_host ? "No town on the server yet. Enter and your town goes up for everyone."
+                               : "The host has not entered yet. WAIT until this says the town is ready, "
+                                 "or you will start a separate new town.",
                   sizeof(g_lbv.town_text));
     } else {
         lstrcpynA(g_lbv.town_text, "The town is ready. Everyone who enters loads the same one.",
