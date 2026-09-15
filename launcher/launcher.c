@@ -70,6 +70,16 @@ static void get_edit(HWND h, char* out, int cap) {
     trim(out);
 }
 
+/* Case-insensitive substring search; avoids a shlwapi dependency. */
+static const char* StrStrIA_compat(const char* hay, const char* needle) {
+    size_t nl = strlen(needle);
+    if (nl == 0) return hay;
+    for (; *hay; hay++) {
+        if (_strnicmp(hay, needle, nl) == 0) return hay;
+    }
+    return NULL;
+}
+
 /* Directory the launcher executable lives in (with trailing backslash). */
 static void compute_dir(void) {
     char path[MAX_PATH];
@@ -78,6 +88,18 @@ static void compute_dir(void) {
     slash = strrchr(path, '\\');
     if (slash) *(slash + 1) = '\0';
     lstrcpynA(g_dir, path, sizeof(g_dir));
+}
+
+/* True when the launcher is running from a temp folder, which is what happens
+ * if someone double-clicks it straight out of a .zip: Windows copies the one
+ * file to %TEMP% and runs it there, with nothing else beside it. That is the
+ * single most common way this launcher ends up unable to find the game. */
+static int running_from_temp(void) {
+    char tmp[MAX_PATH];
+    DWORD n = GetTempPathA(sizeof(tmp), tmp);
+    if (n == 0 || n >= sizeof(tmp)) return 0;
+    if (StrStrIA_compat(g_dir, tmp) == g_dir) return 1;
+    return StrStrIA_compat(g_dir, "\\Temp\\") != NULL;
 }
 
 static void path_in_dir(char* out, int cap, const char* leaf) {
@@ -265,8 +287,25 @@ static void on_play(HWND wnd) {
         char game[MAX_PATH];
         path_in_dir(game, sizeof(game), GAME_EXE);
         if (GetFileAttributesA(game) == INVALID_FILE_ATTRIBUTES) {
-            MessageBoxA(wnd, "AnimalCrossing.exe was not found next to this launcher.\n"
-                             "Put this launcher in the same folder as the game.", "Missing game", MB_OK|MB_ICONERROR);
+            char m[900];
+            if (running_from_temp()) {
+                snprintf(m, sizeof(m),
+                         "It looks like you started this launcher from inside a .zip file.\n\n"
+                         "Windows only copies the one file you clicked, so the game is not "
+                         "beside it.\n\n"
+                         "Right-click the .zip, choose \"Extract All\", pick a normal folder "
+                         "(your Desktop is fine), then run AnimalCrossingOnline.exe from the "
+                         "folder you extracted.");
+            } else {
+                snprintf(m, sizeof(m),
+                         "AnimalCrossing.exe is not in this folder:\n\n    %s\n\n"
+                         "The launcher and the game have to sit in the SAME folder, "
+                         "alongside the shaders folder and the rom folder.\n\n"
+                         "If you unzipped this, check for a folder inside a folder - the game "
+                         "may be one level down. If the game was there and vanished, check "
+                         "whether your antivirus quarantined it.", g_dir);
+            }
+            MessageBoxA(wnd, m, "Cannot find the game", MB_OK | MB_ICONERROR);
             return;
         }
     }
@@ -291,8 +330,14 @@ static void on_play(HWND wnd) {
         char srv[MAX_PATH];
         path_in_dir(srv, sizeof(srv), SERVER_EXE);
         if (GetFileAttributesA(srv) == INVALID_FILE_ATTRIBUTES) {
-            MessageBoxA(wnd, "acnet_server.exe was not found next to this launcher, so hosting is unavailable.\n"
-                             "Ask whoever set up the game for the server file, or use Join instead.", "Cannot host", MB_OK|MB_ICONERROR);
+            {
+                char m[700];
+                snprintf(m, sizeof(m),
+                         "acnet_server.exe is not in this folder:\n\n    %s\n\n"
+                         "Hosting needs it. Ask whoever set up the game for that file, "
+                         "or choose Join and let someone else host.", g_dir);
+                MessageBoxA(wnd, m, "Cannot host", MB_OK | MB_ICONERROR);
+            }
             return;
         }
         if (!start_local_server(code)) {
