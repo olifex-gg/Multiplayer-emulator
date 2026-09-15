@@ -14,6 +14,8 @@
 #ifndef PC_NET_H
 #define PC_NET_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -65,6 +67,14 @@ int pc_net_remote_count(void);
  * headers need not include the wire protocol; the real type is
  * acnet_player_state_t and callers in pc_net-aware code cast accordingly.
  * A thin typed accessor is provided in pc_net_puppet.h for the engine side. */
+/* Live resident sync. If another resident's saved character and house have
+ * arrived since the last call, copy them out (big-endian, exactly as in the
+ * town blob) and return 1. The caller writes them over that resident's
+ * blocks in the running save and byte-swaps them in place. Never fires for
+ * the local player's own slot. */
+int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
+                                size_t home_len);
+
 int pc_net_get_remote_fields(int slot, float* x, float* y, float* z, int* angle_y,
                              unsigned* anim_index, float* anim_frame, unsigned* item,
                              unsigned* emote, unsigned* area);

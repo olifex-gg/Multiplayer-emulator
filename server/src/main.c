@@ -233,14 +233,20 @@ static int send_msg(ENetPeer* peer, uint8_t channel, uint8_t type, const void* p
     return 0;
 }
 
-static void room_broadcast(int room, const client_t* except, uint8_t channel, uint8_t type,
-                           const void* payload, size_t payload_len, int reliable) {
+static void room_broadcast_blob(int room, const client_t* except, uint8_t channel, uint8_t type,
+                                const void* payload, size_t payload_len, const void* blob,
+                                size_t blob_len, int reliable) {
     int i;
     for (i = 0; i < ACNET_MAX_CLIENTS; i++) {
         client_t* c = &g_clients[i];
         if (!c->in_use || !c->logged_in || c->room != room || c == except) continue;
-        send_msg(c->peer, channel, type, payload, payload_len, NULL, 0, reliable);
+        send_msg(c->peer, channel, type, payload, payload_len, blob, blob_len, reliable);
     }
+}
+
+static void room_broadcast(int room, const client_t* except, uint8_t channel, uint8_t type,
+                           const void* payload, size_t payload_len, int reliable) {
+    room_broadcast_blob(room, except, channel, type, payload, payload_len, NULL, 0, reliable);
 }
 
 static void send_reject(ENetPeer* peer, uint8_t reason, const char* text) {
@@ -411,6 +417,21 @@ static void handle_town_upload(client_t* c, const uint8_t* payload, size_t paylo
     ack.by_slot = (uint8_t)c->slot;
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_TOWN_ACK, &ack, sizeof(ack), NULL, 0, 1);
     room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_TOWN_VERSION, &ack, sizeof(ack), 1);
+    {
+        /* Live resident sync: hand the uploader's own two blocks, as now
+         * stored, to everyone else so their running games take the new
+         * character and house without a reload. */
+        acnet_resident_data_t rd;
+        uint8_t rb[ACNET_RESIDENT_BLOB_SIZE];
+        const uint8_t* town = g_rooms[c->room].town.data;
+        memset(&rd, 0, sizeof(rd));
+        rd.slot = (uint8_t)c->slot;
+        rd.town_version = v;
+        memcpy(rb, town + ACNET_PRIVATE_OFFSET(c->slot), ACNET_PRIVATE_SIZE);
+        memcpy(rb + ACNET_PRIVATE_SIZE, town + ACNET_HOME_OFFSET(c->slot), ACNET_HOME_SIZE);
+        room_broadcast_blob(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_DATA, &rd, sizeof(rd), rb,
+                            sizeof(rb), 1);
+    }
     logf_("[%s] town v%u saved by %s (reason %u)", g_rooms[c->room].town.invite, v, c->name, u.reason);
 }
 

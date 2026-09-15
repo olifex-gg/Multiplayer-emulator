@@ -153,6 +153,13 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         printf("PONG nonce=%u server_ms=%lld\n", p.nonce, (long long)p.server_unix_ms);
         break;
     }
+    case ACNET_MSG_RESIDENT_DATA: {
+        acnet_resident_data_t r;
+        if (payload_len != sizeof(r)) return 0;
+        memcpy(&r, payload, sizeof(r));
+        printf("RESIDENT slot=%u version=%u bytes=%zu\n", r.slot, r.town_version, blob_len);
+        break;
+    }
     case ACNET_MSG_PLAYER_STATE: {
         acnet_player_state_t s;
         if (payload_len != sizeof(s)) return 0;

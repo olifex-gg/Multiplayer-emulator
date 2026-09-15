@@ -71,7 +71,8 @@ enum acnet_msg {
     ACNET_MSG_PLAYER_STATE  = 14, /* C->S->C acnet_player_state_t (channel 1) */
     ACNET_MSG_TOWN_VERSION  = 15, /* S->C  acnet_town_ack_t: someone else's upload landed */
     ACNET_MSG_STATUS_REQUEST = 16,/* C->S  acnet_status_request_t (pre-login, claims nothing) */
-    ACNET_MSG_STATUS_REPLY   = 17 /* S->C  acnet_status_reply_t */
+    ACNET_MSG_STATUS_REPLY   = 17,/* S->C  acnet_status_reply_t */
+    ACNET_MSG_RESIDENT_DATA  = 18 /* S->C  acnet_resident_data_t + ACNET_RESIDENT_BLOB_SIZE bytes */
 };
 
 enum acnet_reject_reason {
@@ -200,6 +201,17 @@ typedef struct ACNET_PACKED {
     int64_t  server_unix_ms;
     acnet_slot_info_t slots[ACNET_MAX_PLAYERS];
 } acnet_status_reply_t;
+
+/* Live resident sync. When a resident's upload lands, the server sends that
+ * resident's own two blocks (Private_c then mHm_hs_c, big-endian exactly as
+ * they sit in the town blob) to everyone else in the town, so their running
+ * games can take the new character and house without a reload. */
+#define ACNET_RESIDENT_BLOB_SIZE (ACNET_PRIVATE_SIZE + ACNET_HOME_SIZE)
+typedef struct ACNET_PACKED {
+    uint8_t  slot;
+    uint8_t  reserved[3];
+    uint32_t town_version;
+} acnet_resident_data_t;
 
 /* Puppet stream (step 2). Sent by each client at 20-30 Hz, relayed to the
  * others. area identifies the field or room so puppets are only drawn when

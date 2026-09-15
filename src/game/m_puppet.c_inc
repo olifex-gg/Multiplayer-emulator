@@ -16,6 +16,7 @@
 
 #include "ac_puppet.h"
 #include "pc_net.h"
+#include "pc_save_bswap.h"
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
 
@@ -112,6 +113,23 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
                              player_actor->world.position.z, player_actor->shape_info.rotation.y,
                              (unsigned)lp->now_main_index, lp->keyframe0.frame_control.current_frame,
                              (unsigned)(u8)lp->item_kind, 0u, 0u, 0u);
+
+    /* 1b. Take any other resident's freshly saved character and house into
+     *     our running town. Those blocks are theirs alone, so overwriting
+     *     them in place is safe: every pointer into the save stays valid,
+     *     only the contents change, and it happens here between the game's
+     *     own reads rather than from the network pump. */
+    for (slot = 0; slot < 4; slot++) {
+        if (slot == local_slot) {
+            continue;
+        }
+        if (pc_net_take_resident_update(slot, Save_GetPointer(private_data[slot]), sizeof(Private_c),
+                                        Save_GetPointer(homes[slot]), sizeof(mHm_hs_c))) {
+            pc_save_bswap_private(Save_GetPointer(private_data[slot]), PC_BSWAP_FROM_BE);
+            pc_save_bswap_home(Save_GetPointer(homes[slot]), PC_BSWAP_FROM_BE);
+            OSReport("[puppet] resident %d's new character and house are now in this town\n", slot);
+        }
+    }
 
     /* 2. Update existing puppets from network state, deleting those whose
      *    resident has gone. Capture next_actor before any delete. */

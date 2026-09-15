@@ -128,4 +128,13 @@ grep -q "^SLOT 3 dave away" <<<"$out" || fail "dave should still own his slot: $
 out=$(cli --name erin || true)
 grep -q "REJECT reason=3" <<<"$out" || fail "town should be full after four residents: $out"
 
+echo "14. a resident's save is pushed live to the others (character + house blocks)"
+cli --name alice --wait 4 > "$TMP/alice_live.txt" &
+LPID=$!
+sleep 0.7
+out=$(cli --name bob --upload "$TMP/townB.gci")
+grep -q "ACK status=0 version=3" <<<"$out" || fail "bob live upload: $out"
+wait "$LPID" || true
+grep -q "RESIDENT slot=1 version=3 bytes=19184" "$TMP/alice_live.txt" || fail "alice got no live resident data: $(cat "$TMP/alice_live.txt")"
+
 echo "ALL PASSED"

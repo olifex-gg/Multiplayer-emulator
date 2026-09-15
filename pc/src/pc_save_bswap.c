@@ -1027,3 +1027,6 @@ u16 pc_checksum_be(const u8* data, u32 size, u16 old_checksum) {
     raw = (u16)((sum - old_checksum) & 0xFFFF);
     return (u16)((~raw + 1) & 0xFFFF);
 }
+
+void pc_save_bswap_private(Private_c* prv, pc_bswap_dir_t dir) { swap_Private(prv, dir); }
+void pc_save_bswap_home(mHm_hs_c* home, pc_bswap_dir_t dir) { swap_mHm_hs(home, dir); }

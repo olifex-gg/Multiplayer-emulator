@@ -214,6 +214,16 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   itself fails silently, so a wrong address, a wrong invite code or a full town all used to
   end with the game quietly starting in single-player.
 
+- **Live resident sync (step 3, first slice).** When a resident's save lands on the server,
+  the server sends that resident's own two blocks (`Private_c` and `mHm_hs_c`, ~19 KB,
+  big-endian as stored) to everyone else in the town. The client parks them until the
+  game's per-frame hook takes them, copies them over that resident's blocks in the running
+  `Save_t` and byte-swaps them in place. Overwriting in place is what makes it safe: every
+  pointer into the save stays valid, only the contents change, and it happens between the
+  game's own reads. So a new resident choosing a house, or anyone changing their look or
+  furniture, shows up for the others as soon as they save, with no relaunch. Land changes
+  (trees, items, flowers) are still the event relay to come.
+
 What step 1 does **not** yet do: show a second character (that is step 2, the puppet actor),
 apply incoming player-state or chat (counted but not yet rendered), or converge live town
 changes (step 3). Today two people can load the same town as different residents from the

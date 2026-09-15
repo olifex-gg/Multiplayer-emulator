@@ -28,6 +28,10 @@ int pc_save_bswap_verify_roundtrip_mail(const u8* original_be, u32 size);
 int pc_save_bswap_verify_roundtrip_original(const u8* original_be, u32 size);
 int pc_save_bswap_verify_roundtrip_diary(const u8* original_be, u32 size);
 
+/* One resident's own blocks, for live sync of another player's save. */
+void pc_save_bswap_private(Private_c* prv, pc_bswap_dir_t dir);
+void pc_save_bswap_home(mHm_hs_c* home, pc_bswap_dir_t dir);
+
 /* Byte-swap foreigner (passport) data for Card B travel */
 void pc_save_bswap_foreigner(mCD_foreigner_c* f, pc_bswap_dir_t dir);
 

@@ -71,6 +71,15 @@ typedef struct {
 
 static remote_resident_t s_remote[ACNET_MAX_PLAYERS];
 
+/* Live resident sync: another resident's freshly saved blocks, held until
+ * the game takes them (between its own reads of the save). */
+typedef struct {
+    int      pending;
+    uint32_t version;
+    uint8_t  bytes[ACNET_RESIDENT_BLOB_SIZE]; /* Private_c then mHm_hs_c, big-endian */
+} resident_update_t;
+static resident_update_t s_resident_update[ACNET_MAX_PLAYERS];
+
 /* Pending chat, drained by the game once per frame. */
 typedef struct {
     int  pending;
@@ -293,6 +302,19 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         OSReport("[net] another resident (slot %u) saved; town is now v%u (will refresh on next visit home)\n",
                  a.by_slot, a.town_version);
         return ACNET_MSG_TOWN_VERSION;
+    }
+    case ACNET_MSG_RESIDENT_DATA: {
+        acnet_resident_data_t r;
+        if (payload_len != sizeof(r)) return -1;
+        memcpy(&r, payload, sizeof(r));
+        if (r.slot < ACNET_MAX_PLAYERS && (int)r.slot != s_slot && blob_len == ACNET_RESIDENT_BLOB_SIZE) {
+            memcpy(s_resident_update[r.slot].bytes, blob, ACNET_RESIDENT_BLOB_SIZE);
+            s_resident_update[r.slot].version = r.town_version;
+            s_resident_update[r.slot].pending = 1;
+            OSReport("[net] resident %u saved (town v%u); taking their character and house into this town\n",
+                     r.slot, r.town_version);
+        }
+        return ACNET_MSG_RESIDENT_DATA;
     }
     case ACNET_MSG_AUTHORITY: {
         acnet_authority_t a;
@@ -521,6 +543,25 @@ void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned a
 }
 
 int pc_net_local_slot(void) { return s_active ? s_slot : -1; }
+
+int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
+                                size_t home_len) {
+    resident_update_t* u;
+    if (!s_active || slot < 0 || slot >= ACNET_MAX_PLAYERS || slot == s_slot) return 0;
+    u = &s_resident_update[slot];
+    if (!u->pending) return 0;
+    if (private_len != ACNET_PRIVATE_SIZE || home_len != ACNET_HOME_SIZE) {
+        OSReport("[net] resident block size mismatch (%u/%u vs %u/%u); live sync disabled for slot %d\n",
+                 (unsigned)private_len, (unsigned)home_len, (unsigned)ACNET_PRIVATE_SIZE,
+                 (unsigned)ACNET_HOME_SIZE, slot);
+        u->pending = 0;
+        return 0;
+    }
+    memcpy(private_out, u->bytes, ACNET_PRIVATE_SIZE);
+    memcpy(home_out, u->bytes + ACNET_PRIVATE_SIZE, ACNET_HOME_SIZE);
+    u->pending = 0;
+    return 1;
+}
 
 int pc_net_get_remote_fields(int slot, float* x, float* y, float* z, int* angle_y,
                              unsigned* anim_index, float* anim_frame, unsigned* item,
