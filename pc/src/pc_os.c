@@ -1,5 +1,6 @@
 /* pc_os.c - Dolphin OS replacement: arena, timers, threads, message queues */
 #include "pc_platform.h"
+#include "pc_log.h"
 
 #include <time.h>
 
@@ -295,15 +296,25 @@ u32 OSGetConsoleType(void) { return 0x10000004; /* OS_CONSOLE_DEVHW1 */ }
 void OSPanic(const char* file, int line, const char* msg, ...) {
     va_list args;
     fprintf(stderr, "OSPanic at %s:%d: ", file, line);
+    pc_log_printf("OSPanic at %s:%d: ", file, line);
     va_start(args, msg);
     vfprintf(stderr, msg, args);
     va_end(args);
+    va_start(args, msg);
+    pc_log_vprintf(msg, args);
+    va_end(args);
     fprintf(stderr, "\n");
+    pc_log_printf("\n");
 }
 
 void OSReport(const char* fmt, ...) {
-    if (!g_pc_verbose) return;
     va_list args;
+    /* Always goes to aclog.txt: with the console hidden this is the only
+     * record a player can send back after something goes wrong. */
+    va_start(args, fmt);
+    pc_log_vprintf(fmt, args);
+    va_end(args);
+    if (!g_pc_verbose) return;
     va_start(args, fmt);
     vprintf(fmt, args);
     va_end(args);
@@ -311,6 +322,10 @@ void OSReport(const char* fmt, ...) {
 }
 
 void OSVReport(const char* fmt, va_list list) {
+    va_list copy;
+    va_copy(copy, list);
+    pc_log_vprintf(fmt, copy);
+    va_end(copy);
     if (!g_pc_verbose) return;
     vprintf(fmt, list);
 }

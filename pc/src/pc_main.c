@@ -3,6 +3,7 @@
 #define _GNU_SOURCE /* Dl_info / dladdr from <dlfcn.h> on glibc */
 #endif
 #include "pc_platform.h"
+#include "pc_log.h"
 #include "pc_gx_internal.h"
 #include "pc_texture_pack.h"
 #include "pc_settings.h"
@@ -261,7 +262,41 @@ static int pc_parse_rain_intensity(const char* text) {
     return -1;
 }
 
+#ifdef _WIN32
+/* Turn "it just closes" into a line in aclog.txt saying where it died. */
+static LONG WINAPI pc_crash_filter(EXCEPTION_POINTERS* info) {
+    void* addr = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress : NULL;
+    DWORD code = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0;
+    HMODULE mod = NULL;
+    char name[MAX_PATH];
+
+    name[0] = '\0';
+    if (addr && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)addr, &mod) &&
+        mod) {
+        if (!GetModuleFileNameA(mod, name, sizeof(name))) name[0] = '\0';
+    }
+    pc_log_printf("\n*** CRASH: exception 0x%08lX at %p\n", (unsigned long)code, addr);
+    if (name[0]) {
+        pc_log_printf("*** in module %s (base %p, offset 0x%lX)\n", name, (void*)mod,
+                      (unsigned long)((char*)addr - (char*)mod));
+    }
+    if (code == EXCEPTION_ACCESS_VIOLATION && info->ExceptionRecord->NumberParameters >= 2) {
+        pc_log_printf("*** %s address %p\n",
+                      info->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+                      (void*)info->ExceptionRecord->ExceptionInformation[1]);
+    }
+    pc_log_shutdown();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 int main(int argc, char* argv[]) {
+    pc_log_init();
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(pc_crash_filter);
+#endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("Usage: AnimalCrossing [options]\n");
@@ -384,11 +419,16 @@ int main(int argc, char* argv[]) {
 #endif
 
     SDL_SetMainReady();
+    pc_log_printf("[boot] loading settings\n");
     pc_settings_load();
     pc_keybindings_load();
+    pc_log_printf("[boot] creating the window and OpenGL context\n");
     pc_platform_init();
+    pc_log_printf("[boot] opening the disc image\n");
     pc_disc_init();
+    pc_log_printf("[boot] loading game assets\n");
     if (!pc_assets_init()) {
+        pc_log_printf("[boot] FAILED: no game data found in rom/\n");
         const char* msg =
             "No game data found.\n\n"
             "Animal Crossing needs the original GameCube ROM to run.\n"
@@ -400,12 +440,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    pc_log_printf("[boot] assets ok\n");
     ac_entry();                         /* sets HotStartEntry = &entry */
+    pc_log_printf("[boot] entering network init\n");
     pc_net_init(); /* connect to town server (no-op in single-player); writes card_a before load */
+    pc_log_printf("[boot] network init done, starting the game\n");
 
     boot_main(argc, (const char**)argv); /* full init → HotStartEntry → game loop */
 
     pc_disc_shutdown();
+    pc_log_shutdown();
     pc_net_shutdown();
     pc_platform_shutdown();
     return 0;

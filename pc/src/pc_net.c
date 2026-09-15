@@ -24,6 +24,11 @@
 /* The card-A GCI the game loads/saves (mirrors PC_GCI_PATH in pc_m_card.c). */
 #define NET_CARD_A_DIR "save/card_a"
 #define NET_GCI_PATH   NET_CARD_A_DIR "/DobutsunomoriP_MURA.gci"
+/* One-time, never-overwritten copy of whatever town was on this PC before it
+ * first joined a server. Downloading a town replaces the local save, so a
+ * single-player town would otherwise be gone the first time its owner joins
+ * somebody else's world. */
+#define NET_GCI_PRISTINE NET_GCI_PATH ".before-online"
 
 typedef struct {
     int    configured;         /* a server address was found in settings.ini */
@@ -181,6 +186,28 @@ static int64_t local_ms(void) {
  * present blob, writes the blob to NET_GCI_PATH. */
 static int pump_until(uint8_t want, uint32_t timeout_ms);
 
+/* Copy the current local town aside once, the first time we are about to
+ * replace it with a downloaded one. Best effort: never blocks the download. */
+static void backup_local_town_once(void) {
+    FILE* src;
+    FILE* dst;
+    char buf[8192];
+    size_t n;
+
+    dst = fopen(NET_GCI_PRISTINE, "rb");
+    if (dst) { fclose(dst); return; }    /* already saved a pristine copy */
+    src = fopen(NET_GCI_PATH, "rb");
+    if (!src) return;                     /* nothing here yet; nothing to lose */
+    dst = fopen(NET_GCI_PRISTINE, "wb");
+    if (!dst) { fclose(src); return; }
+    while ((n = fread(buf, 1, sizeof(buf), src)) > 0) {
+        if (fwrite(buf, 1, n, dst) != n) break;
+    }
+    fclose(src);
+    fclose(dst);
+    OSReport("[net] kept a copy of your previous town at %s\n", NET_GCI_PRISTINE);
+}
+
 static int write_town_file(const uint8_t* blob, size_t len) {
     FILE* fp;
     char tmp[256];
@@ -189,6 +216,7 @@ static int write_town_file(const uint8_t* blob, size_t len) {
 #else
     mkdir("save", 0755); mkdir(NET_CARD_A_DIR, 0755);
 #endif
+    backup_local_town_once();
     snprintf(tmp, sizeof(tmp), "%s.netdl", NET_GCI_PATH);
     fp = fopen(tmp, "wb");
     if (!fp) return -1;
@@ -355,7 +383,12 @@ int pc_net_init(void) {
     int rc;
 
     read_config();
-    if (!s_cfg.configured) return 0;
+    if (!s_cfg.configured) {
+        OSReport("[net] no [Network] block in settings.ini; single-player\n");
+        return 0;
+    }
+    OSReport("[net] init: server=%s port=%d invite=%s name=%s\n", s_cfg.host, s_cfg.port,
+             s_cfg.invite, s_cfg.name);
 
     if (enet_initialize() != 0) {
         OSReport("[net] enet_initialize failed; starting in single-player\n");
