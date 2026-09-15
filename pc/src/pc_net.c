@@ -50,6 +50,8 @@ static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
 static uint32_t     s_town_version;
 static int          s_town_present;     /* the server had a town when we logged in */
 static unsigned     s_puppet_rx;       /* diagnostic counters */
+static unsigned     s_puppet_tx;
+static uint32_t     s_last_state_ms;
 static unsigned     s_chat_rx;
 
 /* --- Remote residents (step 2) -----------------------------------------
@@ -314,17 +316,27 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
     }
 }
 
+/* Service the connection. want != 0: block up to timeout_ms for a packet of
+ * that type. want == 0 with timeout 0: the per-frame call -- deliver every
+ * packet already waiting and send everything queued, then return at once.
+ * That second mode must actually reach enet_host_service(): a timeout of
+ * zero is a valid non-blocking poll, and it is also the only moment ENet
+ * transmits what we queued, so skipping it silently stalls both directions. */
 static int pump_until(uint8_t want, uint32_t timeout_ms) {
     uint32_t deadline = enet_time_get() + timeout_ms;
     if (!s_client_host) return -1;
     for (;;) {
         ENetEvent ev;
         uint32_t now = enet_time_get();
+        int32_t left = (int32_t)(deadline - now);
         int rc;
-        if ((int32_t)(deadline - now) <= 0) return 0;
-        rc = enet_host_service(s_client_host, &ev, deadline - now);
+        if (left < 0) left = 0;
+        rc = enet_host_service(s_client_host, &ev, (uint32_t)left);
         if (rc < 0) return -1;
-        if (rc == 0) continue;
+        if (rc == 0) {
+            if (left == 0) return 0; /* nothing more waiting (or timed out) */
+            continue;
+        }
         if (ev.type == ENET_EVENT_TYPE_DISCONNECT) {
             s_active = 0;
             return -1;
@@ -368,7 +380,8 @@ static int pump_until(uint8_t want, uint32_t timeout_ms) {
             }
             enet_packet_destroy(ev.packet);
             if (t == ACNET_MSG_REJECT) return t;
-            if (want == 0 || t == (int)want) return t;
+            if (want != 0 && t == (int)want) return t;
+            /* want == 0: keep draining; the rc == 0 branch above ends it. */
         }
     }
 }
@@ -461,9 +474,19 @@ int pc_net_init(void) {
 }
 
 void pc_net_service(void) {
+    static uint32_t last_report;
+    uint32_t now;
     if (!s_active) return;
-    (void)pump_until(0, 0); /* non-blocking drain */
+    (void)pump_until(0, 0); /* deliver waiting packets, transmit queued ones */
     remote_expire();
+    now = enet_time_get();
+    if (now - last_report >= 5000) {
+        int i, n = 0;
+        for (i = 0; i < ACNET_MAX_PLAYERS; i++) n += s_remote[i].active ? 1 : 0;
+        OSReport("[net] state sent=%u received=%u residents-visible=%d rtt=%ums\n", s_puppet_tx,
+                 s_puppet_rx, n, s_peer ? s_peer->roundTripTime : 0u);
+        last_report = now;
+    }
 }
 
 /* --- Player-state stream (step 2) --------------------------------------- */
@@ -473,7 +496,14 @@ void pc_net_send_player_state(float x, float y, float z, int angle_y, unsigned a
                               unsigned flags) {
     static uint16_t seq;
     acnet_player_state_t s;
+    uint32_t now;
     if (!s_active) return;
+    /* The game calls this every frame; 30 Hz is plenty for a puppet and
+     * keeps the unreliable channel from queueing faster than it drains. */
+    now = enet_time_get();
+    if (now - s_last_state_ms < 33) return;
+    s_last_state_ms = now;
+    s_puppet_tx++;
     memset(&s, 0, sizeof(s));
     s.client_id = (uint8_t)s_self_id;
     s.slot = (uint8_t)s_slot;

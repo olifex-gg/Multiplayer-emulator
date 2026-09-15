@@ -224,7 +224,8 @@ static void usage(void) {
             "usage: acnet_cli --server HOST --invite CODE --name NAME [--port N] [--slot N]\n"
             "                 [--download FILE] [--upload FILE] [--reason save|leave|periodic|new]\n"
             "                 [--chat TEXT] [--ping] [--wait SECS] [--quiet]\n"
-            "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n");
+            "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n"
+            "       ... --state X,Y,Z      send one player-state packet after login\n");
 }
 
 int main(int argc, char** argv) {
@@ -234,6 +235,7 @@ int main(int argc, char** argv) {
     const char* download = NULL;
     const char* upload = NULL;
     const char* chat = NULL;
+    const char* state = NULL;
     int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -253,6 +255,7 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--download") == 0 && v) { download = v; i++; }
         else if (strcmp(a, "--upload") == 0 && v) { upload = v; i++; }
         else if (strcmp(a, "--chat") == 0 && v) { chat = v; i++; }
+        else if (strcmp(a, "--state") == 0 && v) { state = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
         else if (strcmp(a, "--status") == 0) { do_status = 1; }
@@ -310,6 +313,15 @@ int main(int argc, char** argv) {
     if (rc == ACNET_MSG_REJECT) { exit_code = 1; goto done; }
     if (rc <= 0) { exit_code = 3; goto done; }
 
+    if (state) {
+        acnet_player_state_t ps;
+        memset(&ps, 0, sizeof(ps));
+        sscanf(state, "%f,%f,%f", &ps.x, &ps.y, &ps.z);
+        ps.seq = 1;
+        ps.anim_index = 7;
+        send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
+        enet_host_flush(host);
+    }
     if (download) {
         send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_TOWN_REQUEST, NULL, 0, NULL, 0, 1);
         rc = wait_for(host, peer, ACNET_MSG_TOWN_DATA, 10000, download);

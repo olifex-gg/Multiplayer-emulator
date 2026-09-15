@@ -130,6 +130,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
                     a->world.position.z = z;
                     a->shape_info.rotation.y = (s16)ang;
                 } else {
+                    OSReport("[puppet] resident %d left; removing puppet\n", (int)a->actor_specific);
                     Actor_info_delete(&play->actor_info, a, game);
                 }
             }
@@ -151,8 +152,12 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         if (Puppet_find(play, slot) != NULL) {
             continue;
         }
-        Actor_info_make_actor(&play->actor_info, game, mAc_PROFILE_PUPPET, x, y, z, 0, (s16)ang, 0,
-                              -1, -1, -1, EMPTY_NO, (s16)slot, -1, -1);
+        {
+            ACTOR* made = Actor_info_make_actor(&play->actor_info, game, mAc_PROFILE_PUPPET, x, y, z, 0,
+                                                (s16)ang, 0, -1, -1, -1, EMPTY_NO, (s16)slot, -1, -1);
+            OSReport("[puppet] resident %d appeared at %.0f,%.0f,%.0f: %s\n", slot, x, y, z,
+                     made ? "puppet created" : "FAILED to create puppet actor");
+        }
     }
 }
 
