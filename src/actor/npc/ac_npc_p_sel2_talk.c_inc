@@ -487,8 +487,9 @@ static void aNPS2_make_door_data(Door_data_c* door_data, int type, NPC_P_SEL2_AC
     static aNPS2_door_data_c home_data = { SCENE_FG, mSc_DIRECT_SOUTH, 1, 1, 2240, 2240 };
     static aNPS2_door_data_c station_data = { SCENE_FG, mSc_DIRECT_SOUTH, 0, 0, 1979, 760 };
     static aNPS2_door_data_c* data[] = { &home_data, &station_data, &station_data, &demo2_data };
-    static s16 homeX[] = { 2128, 2352, 2128, 2352 };
-    static s16 homeZ[] = { 1488, 1488, 1768, 1768 };
+    /* Offsets from the house acre's origin (multiplayer fork: two acres). */
+    static s16 homeX[] = { 208, 432, 208, 432 };
+    static s16 homeZ[] = { 208, 208, 488, 488 };
     static u8 drt[] = { mSc_DIRECT_SOUTH_EAST, mSc_DIRECT_SOUTH_WEST, mSc_DIRECT_SOUTH_EAST, mSc_DIRECT_SOUTH_WEST };
     aNPS2_door_data_c* data_p = data[type];
 
@@ -506,10 +507,14 @@ static void aNPS2_make_door_data(Door_data_c* door_data, int type, NPC_P_SEL2_AC
         int arrange_idx = mHS_get_arrange_idx(p_sel2->player_no);
         int pl_no = p_sel2->player_no;
 
-        door_data->exit_position.x = homeX[arrange_idx];
-        door_data->exit_position.z = homeZ[arrange_idx];
-        door_data->exit_orientation = drt[arrange_idx];
-        door_data->door_actor_name = HOUSE0 + arrange_idx;
+        {
+            f32 ox, oz;
+            mHS_house_origin(arrange_idx, &ox, &oz);
+            door_data->exit_position.x = (s16)ox + homeX[arrange_idx % mHS_HOUSES_PER_ACRE];
+            door_data->exit_position.z = (s16)oz + homeZ[arrange_idx % mHS_HOUSES_PER_ACRE];
+        }
+        door_data->exit_orientation = drt[arrange_idx % mHS_HOUSES_PER_ACRE];
+        door_data->door_actor_name = HOUSE_ID(arrange_idx);
         Common_Get(transition).wipe_type = WIPE_TYPE_TRIFORCE;
         Now_Private->birthday_present_npc = EMPTY_NO;
 

@@ -31,7 +31,7 @@ static void aMBX_check_take_mail(MAILBOX_ACTOR* actor, GAME_PLAY* play) {
         int dAngle = (s16)(mbox_pl_angle - mbox_angle);
         int abs_dAngle = ABS(dAngle);
 
-        if (abs_dAngle < aMBX_PLAYER_OPEN_ANGLE && player->a_btn_pressed == TRUE && pl_no == Common_Get(player_no) && player->item_in_front == (DUMMY_MAILBOX0 + arrange_idx)) {
+        if (abs_dAngle < aMBX_PLAYER_OPEN_ANGLE && player->a_btn_pressed == TRUE && pl_no == Common_Get(player_no) && player->item_in_front == DUMMY_MAILBOX_ID(arrange_idx)) {
 // Aus version changed the reset count needed for the 'free roam' Resetti interaction
 #if VERSION >= VER_GAFU01_00
             if (Common_Get(reset_flag) == TRUE && Now_Private->reset_count < 4) {
@@ -203,7 +203,7 @@ static void aMBX_actor_init(ACTOR* actorx, GAME* game) {
 
     actorx->mv_proc = aMBX_actor_move;
     actorx->dw_proc = aMBX_actor_draw;
-    mFI_SetFG_common(DUMMY_MAILBOX0 + actor->arrange_idx, actorx->world.position, FALSE);
+    mFI_SetFG_common(DUMMY_MAILBOX_ID(actor->arrange_idx), actorx->world.position, FALSE);
     aMBX_setupAction(actor, aMBX_ACT_WAIT);
     aMBX_check_flag(actor);
     actor->kf1.frame_control.current_frame = actor->kf1.frame_control.end_frame;

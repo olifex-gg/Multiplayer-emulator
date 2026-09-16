@@ -395,7 +395,8 @@ static int mPO_make_post_man(GAME_PLAY* play) {
                 int spawned_postman;
 
                 mFI_BlockKind2BkNum(&po_block_x, &po_block_z, mRF_BLOCKKIND_POSTOFFICE);
-                bx_add_idx = pl_block_x >= po_block_x ? 0 : 1;
+                /* multiplayer fork: he flies to the house acre the player is in */
+                bx_add_idx = play->block_table.block_x >= po_block_x ? 0 : 1;
                 spawned_postman = (*Common_Get(clip).npc_clip->setupActor_proc)(
                     play, SP_NPC_POST_MAN, -1, -1, 0, play->block_table.block_x + bx_add[bx_add_idx],
                     play->block_table.block_z, ux_table[bx_add_idx], 7);

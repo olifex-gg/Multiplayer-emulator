@@ -8,6 +8,31 @@
 
 /* Multiplayer fork: the second house acre is whichever other acre the town
  * has of the player-house type (the first is fixed at block (3,2)). */
+extern int mHS_house_origin(int house_no, f32* ox, f32* oz) {
+    int bx = mHS_FIRST_HOUSE_ACRE_BX, bz = mHS_FIRST_HOUSE_ACRE_BZ;
+    int ok = mHS_house_acre_block(mHS_HOUSE_ACRE(house_no & mHS_HOUSE_MASK), &bx, &bz);
+
+    if (!ok) {
+        bx = mHS_FIRST_HOUSE_ACRE_BX;
+        bz = mHS_FIRST_HOUSE_ACRE_BZ;
+    }
+    *ox = (f32)bx * (f32)(UT_X_NUM * mFI_UNIT_BASE_SIZE);
+    *oz = (f32)bz * (f32)(UT_Z_NUM * mFI_UNIT_BASE_SIZE);
+    return ok;
+}
+
+extern int mHS_house_acre_of_block(int bx, int bz) {
+    int abx, abz;
+
+    if (bx == mHS_FIRST_HOUSE_ACRE_BX && bz == mHS_FIRST_HOUSE_ACRE_BZ) {
+        return 0;
+    }
+    if (mHS_house_acre_block(1, &abx, &abz) && abx == bx && abz == bz) {
+        return 1;
+    }
+    return -1;
+}
+
 extern int mHS_house_acre_block(int acre, int* bx_out, int* bz_out) {
     int bx, bz;
 

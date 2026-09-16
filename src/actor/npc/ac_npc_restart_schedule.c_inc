@@ -12,8 +12,9 @@ static void aNRST_think_title(NPC_RESTART_ACTOR* actor, GAME_PLAY* play) {
 
 static void aNRST_think_door(NPC_RESTART_ACTOR* actor, GAME_PLAY* play) {
     Door_data_c door_data;
-    static s16 homeX[] = { 2128, 2352, 2128, 2352 };
-    static s16 homeZ[] = { 1488, 1488, 1768, 1768 };
+    /* Offsets from the house acre's origin (multiplayer fork: two acres). */
+    static s16 homeX[] = { 208, 432, 208, 432 };
+    static s16 homeZ[] = { 208, 208, 488, 488 };
     static u8 drt[] = { mSc_DIRECT_SOUTH_EAST, mSc_DIRECT_SOUTH_WEST, mSc_DIRECT_SOUTH_EAST, mSc_DIRECT_SOUTH_WEST };
     int arrange_idx = mHS_get_arrange_idx(Common_Get(player_no));
     
@@ -28,10 +29,14 @@ static void aNRST_think_door(NPC_RESTART_ACTOR* actor, GAME_PLAY* play) {
 
     // set with real data?
     // this is strange and I suspect this was toggled on/off for debugging
-    door_data.exit_position.x = homeX[arrange_idx];
-    door_data.exit_position.z = homeZ[arrange_idx];
-    door_data.exit_orientation = drt[arrange_idx];
-    door_data.door_actor_name = HOUSE0 + arrange_idx;
+    {
+        f32 ox, oz;
+        mHS_house_origin(arrange_idx, &ox, &oz);
+        door_data.exit_position.x = (s16)ox + homeX[arrange_idx % mHS_HOUSES_PER_ACRE];
+        door_data.exit_position.z = (s16)oz + homeZ[arrange_idx % mHS_HOUSES_PER_ACRE];
+    }
+    door_data.exit_orientation = drt[arrange_idx % mHS_HOUSES_PER_ACRE];
+    door_data.door_actor_name = HOUSE_ID(arrange_idx);
 
     goto_other_scene(play, &door_data, TRUE);
     Common_Get(transition).wipe_type = WIPE_TYPE_TRIFORCE;

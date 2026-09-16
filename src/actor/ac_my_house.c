@@ -144,7 +144,7 @@ static void aMHS_actor_ct(ACTOR* actorx, GAME* game) {
     static s16 angle_table[2] = { DEG2SHORT_ANGLE(90.0f), DEG2SHORT_ANGLE(0.0f) };
 
     STRUCTURE_ACTOR* my_house = (STRUCTURE_ACTOR*)actorx;
-    int house_idx = actorx->npc_id - HOUSE0;
+    int house_idx = HOUSE_IDX(actorx->npc_id);
     int side_idx = house_idx & 1;
     int size = Save_Get(homes[house_idx]).size_info.size;
     int season;
@@ -203,7 +203,7 @@ static void aMHS_actor_ct(ACTOR* actorx, GAME* game) {
 
 static void aMHS_actor_dt(ACTOR* actorx, GAME* game) {
     STRUCTURE_ACTOR* my_house = (STRUCTURE_ACTOR*)actorx;
-    int house_idx = actorx->npc_id - HOUSE0;
+    int house_idx = HOUSE_IDX(actorx->npc_id);
 
     cKF_SkeletonInfo_R_dt(&my_house->keyframe);
     actorx->world.position.x -= aMHS_posX_table[house_idx & 1];

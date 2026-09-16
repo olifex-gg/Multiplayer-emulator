@@ -86,6 +86,10 @@ static mNpc_Sp_Npc_Name_c l_sp_actor_name[] = {
     { ACTOR_PROP_HANIWA1, mPr_SEX_OTHER, 0x213, 2 },
     { ACTOR_PROP_HANIWA2, mPr_SEX_OTHER, 0x213, 2 },
     { ACTOR_PROP_HANIWA3, mPr_SEX_OTHER, 0x213, 2 },
+    { ACTOR_PROP_HANIWA4, mPr_SEX_OTHER, 0x213, 2 }, /* the second house acre (multiplayer fork) */
+    { ACTOR_PROP_HANIWA5, mPr_SEX_OTHER, 0x213, 2 },
+    { ACTOR_PROP_HANIWA6, mPr_SEX_OTHER, 0x213, 2 },
+    { ACTOR_PROP_HANIWA7, mPr_SEX_OTHER, 0x213, 2 },
     // K.K. Slider
     { SP_NPC_P_SEL, mPr_SEX_OTHER, 0x214, 2 },
     { SP_NPC_TOTAKEKE, mPr_SEX_OTHER, 0x214, 2 },

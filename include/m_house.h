@@ -42,6 +42,12 @@ extern int mHS_set_use(int player_no, int house_no);
 extern int mHS_house_acre_block(int acre, int* bx_out, int* bz_out);
 #define mHS_FIRST_HOUSE_ACRE_BX 3
 #define mHS_FIRST_HOUSE_ACRE_BZ 2
+/* The world origin (north-west corner) of the acre house_no stands in; the
+ * house tables in the actors are offsets from it. FALSE when that acre does
+ * not exist (then the first acre's origin is returned). */
+extern int mHS_house_origin(int house_no, f32* ox, f32* oz);
+/* Which house acre block (bx, bz) is: 0, 1, or -1 for neither. */
+extern int mHS_house_acre_of_block(int bx, int bz);
 
 #ifdef __cplusplus
 }

@@ -536,7 +536,19 @@ extern int mNT_check_unknown(mActor_name_t item_no);
 #define ITEM_IS_BURIED_PITFALL_HOLE(item) ((item) >= BURIED_PITFALL_HOLE_START && (item) <= BURIED_PITFALL_HOLE_END)
 #define ITEM_IS_BURIED_PITFALL_HOLE_RSV(item) ((item) >= BURIED_PITFALL_HOLE_RSV_START && (item) <= BURIED_PITFALL_HOLE_RSV_END)
 
-#define ITEM_IS_PLAYER_HOUSE(item) ((item) >= HOUSE0 && (item) < (HOUSE3 + 1))
+/* Multiplayer fork: houses 4-7 (the second house acre) have ids at the end of
+ * the structure band, so a house index and its id convert through these. */
+#define ITEM_IS_PLAYER_HOUSE(item) (((item) >= HOUSE0 && (item) <= HOUSE3) || ((item) >= HOUSE4 && (item) <= HOUSE7))
+#define HOUSE_ID(idx) ((mActor_name_t)((idx) < 4 ? HOUSE0 + (idx) : HOUSE4 + (idx) - 4))
+#define HOUSE_IDX(id) ((id) <= HOUSE3 ? (int)((id) - HOUSE0) : (int)((id) - HOUSE4) + 4)
+#define MAILBOX_ID(idx) ((mActor_name_t)((idx) < 4 ? ACTOR_PROP_MAILBOX0 + (idx) : ACTOR_PROP_MAILBOX4 + (idx) - 4))
+#define MAILBOX_IDX(id) ((id) <= ACTOR_PROP_MAILBOX3 ? (int)((id) - ACTOR_PROP_MAILBOX0) : (int)((id) - ACTOR_PROP_MAILBOX4) + 4)
+#define HANIWA_ID(idx) ((mActor_name_t)((idx) < 4 ? ACTOR_PROP_HANIWA0 + (idx) : ACTOR_PROP_HANIWA4 + (idx) - 4))
+#define HANIWA_IDX(id) ((id) <= ACTOR_PROP_HANIWA3 ? (int)((id) - ACTOR_PROP_HANIWA0) : (int)((id) - ACTOR_PROP_HANIWA4) + 4)
+#define DUMMY_HOUSE_ID(idx) ((mActor_name_t)((idx) < 4 ? DUMMY_HOUSE0 + (idx) : DUMMY_HOUSE4 + (idx) - 4))
+#define DUMMY_MAILBOX_ID(idx) ((mActor_name_t)((idx) < 4 ? DUMMY_MAILBOX0 + (idx) : DUMMY_MAILBOX4 + (idx) - 4))
+#define DUMMY_HANIWA_ID(idx) ((mActor_name_t)((idx) < 4 ? DUMMY_HANIWA0 + (idx) : DUMMY_HANIWA4 + (idx) - 4))
+#define ITEM_IS_DUMMY_MAILBOX(item) (((item) >= DUMMY_MAILBOX0 && (item) <= DUMMY_MAILBOX3) || ((item) >= DUMMY_MAILBOX4 && (item) <= DUMMY_MAILBOX7))
 #define ITEM_IS_NPC_HOUSE(item) ((item) >= NPC_HOUSE_START && (item) < NPC_HOUSE_END)
 #define ITEM_IS_DUMMY_NPC_HOUSE(item) ((item) >= DUMMY_NPC_HOUSE_START && (item) < (DUMMY_NPC_HOUSE_END + 1))
 #define ITEM_IS_ISLAND_NPC_HOUSE(item) ((item) >= COTTAGE_NPC && (item) < COTTAGE_NPC_END)
@@ -3139,7 +3151,11 @@ enum ftr1_e {
 #define COTTAGE_NPC (STRUCTURE_START + 81)
 #define COTTAGE_NPC_END (COTTAGE_NPC + 1)
 #define PORT_SIGN (STRUCTURE_START + 82)
-#define STRUCTURE_END (STRUCTURE_START + 83)
+#define HOUSE4 (STRUCTURE_START + 83) /* multiplayer fork: the second house acre's houses */
+#define HOUSE5 (STRUCTURE_START + 84)
+#define HOUSE6 (STRUCTURE_START + 85)
+#define HOUSE7 (STRUCTURE_START + 86)
+#define STRUCTURE_END (STRUCTURE_START + 87)
 
 #define ETC_START 0x8000
 #define ETC_AIRPLANE ETC_START
@@ -3188,6 +3204,24 @@ enum ftr1_e {
 #define SNOWMAN8 (ACTOR_PROP_START + 16) // A010
 #define TRAIN_DOOR (ACTOR_PROP_START + 17) // A011
 #define ACTOR_PROP_VILLAGER_SIGNBOARD (ACTOR_PROP_START + 18) // A012
+/* multiplayer fork: the second house acre's mailboxes and gyroids */
+#define ACTOR_PROP_MAILBOX4 (ACTOR_PROP_START + 19) // A013
+#define ACTOR_PROP_MAILBOX5 (ACTOR_PROP_START + 20) // A014
+#define ACTOR_PROP_MAILBOX6 (ACTOR_PROP_START + 21) // A015
+#define ACTOR_PROP_MAILBOX7 (ACTOR_PROP_START + 22) // A016
+#define ACTOR_PROP_HANIWA4 (ACTOR_PROP_START + 23) // A017
+#define ACTOR_PROP_HANIWA5 (ACTOR_PROP_START + 24) // A018
+#define ACTOR_PROP_HANIWA6 (ACTOR_PROP_START + 25) // A019
+#define ACTOR_PROP_HANIWA7 (ACTOR_PROP_START + 26) // A01A
+/* multiplayer fork: the second house acre's mailboxes and gyroids */
+#define ACTOR_PROP_MAILBOX4 (ACTOR_PROP_START + 19) // A013
+#define ACTOR_PROP_MAILBOX5 (ACTOR_PROP_START + 20) // A014
+#define ACTOR_PROP_MAILBOX6 (ACTOR_PROP_START + 21) // A015
+#define ACTOR_PROP_MAILBOX7 (ACTOR_PROP_START + 22) // A016
+#define ACTOR_PROP_HANIWA4 (ACTOR_PROP_START + 23) // A017
+#define ACTOR_PROP_HANIWA5 (ACTOR_PROP_START + 24) // A018
+#define ACTOR_PROP_HANIWA6 (ACTOR_PROP_START + 25) // A019
+#define ACTOR_PROP_HANIWA7 (ACTOR_PROP_START + 26) // A01A
 
 #define SP_NPC_START 0xD000
 #define SP_NPC_ARTIST (SP_NPC_START + 0) // D000
@@ -3869,6 +3903,34 @@ enum ftr1_e {
 #define DUMMY_HANIWA2 (DUMMY_HANIWA1 + 1)
 #define DUMMY_HANIWA3 (DUMMY_HANIWA2 + 1)
 #define DUMMY_POST_OFFICE 0xF0FF
+/* multiplayer fork: runtime placeholders for the second house acre (the
+ * first acre's sit in 0xF0F3-0xF0FE and 0xF001-0xF004, boxed in) */
+#define DUMMY_HOUSE4 0xF150
+#define DUMMY_HOUSE5 0xF151
+#define DUMMY_HOUSE6 0xF152
+#define DUMMY_HOUSE7 0xF153
+#define DUMMY_MAILBOX4 0xF154
+#define DUMMY_MAILBOX5 0xF155
+#define DUMMY_MAILBOX6 0xF156
+#define DUMMY_MAILBOX7 0xF157
+#define DUMMY_HANIWA4 0xF158
+#define DUMMY_HANIWA5 0xF159
+#define DUMMY_HANIWA6 0xF15A
+#define DUMMY_HANIWA7 0xF15B
+/* multiplayer fork: runtime placeholders for the second house acre (the
+ * first acre's sit in 0xF0F3-0xF0FE and 0xF001-0xF004, boxed in) */
+#define DUMMY_HOUSE4 0xF150
+#define DUMMY_HOUSE5 0xF151
+#define DUMMY_HOUSE6 0xF152
+#define DUMMY_HOUSE7 0xF153
+#define DUMMY_MAILBOX4 0xF154
+#define DUMMY_MAILBOX5 0xF155
+#define DUMMY_MAILBOX6 0xF156
+#define DUMMY_MAILBOX7 0xF157
+#define DUMMY_HANIWA4 0xF158
+#define DUMMY_HANIWA5 0xF159
+#define DUMMY_HANIWA6 0xF15A
+#define DUMMY_HANIWA7 0xF15B
 #define DUMMY_NEEDLEWORK_SHOP 0xF0FF
 #define DUMMY_STATION 0xF100
 #define DUMMY_POLICE_STATION 0xF101

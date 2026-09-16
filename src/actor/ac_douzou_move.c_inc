@@ -119,6 +119,7 @@ static void aDOU_setEffect(ACTOR* actor, GAME* game) {
     STRUCTURE_ACTOR* douzou = (STRUCTURE_ACTOR*)actor;
     f32 dt = (f32)game->graph->dt_num_60fps_frames;
 
+    static f32 extra_time[mHS_HOUSE_NUM]; /* the actor keeps four timers; houses 4-7 keep theirs here */
     f32 time_tbl[mHS_HOUSE_NUM];
     int i;
 
@@ -126,6 +127,9 @@ static void aDOU_setEffect(ACTOR* actor, GAME* game) {
     time_tbl[1] = douzou->arg1_f;
     time_tbl[2] = douzou->arg2_f;
     time_tbl[3] = douzou->arg3_f;
+    for (i = 4; i < mHS_HOUSE_NUM; i++) {
+        time_tbl[i] = extra_time[i];
+    }
 
     for (i = 0; i < mHS_HOUSE_NUM; i++) {
         if (aDOU_set_check(i)) {
@@ -146,6 +150,9 @@ static void aDOU_setEffect(ACTOR* actor, GAME* game) {
     douzou->arg1_f = time_tbl[1];
     douzou->arg2_f = time_tbl[2];
     douzou->arg3_f = time_tbl[3];
+    for (i = 4; i < mHS_HOUSE_NUM; i++) {
+        extra_time[i] = time_tbl[i];
+    }
 }
 
 static void aDOU_set_bgOffset(ACTOR* actor, int height) {

@@ -100,6 +100,11 @@ static STRUCTURE_ACTOR* aSTR_setupActor_proc(GAME* game, mActor_name_t structure
         { mAc_PROFILE_COTTAGE_MY, aSTR_TYPE_COTTAGE_MY, aSTR_PAL_MYHOME_ISLAND, 0 },
         { mAc_PROFILE_COTTAGE_NPC, aSTR_TYPE_COTTAGE_NPC, aSTR_PAL_HOUSE_I, 0 },
         { mAc_PROFILE_RESERVE, aSTR_TYPE_RESERVE, aSTR_PAL_RESERVE, 0 },
+        /* HOUSE4..7 (multiplayer fork: the second house acre) */
+        { mAc_PROFILE_MYHOUSE, aSTR_TYPE_MYHOME, aSTR_PAL_MYHOME_A, 0 },
+        { mAc_PROFILE_MYHOUSE, aSTR_TYPE_MYHOME, aSTR_PAL_MYHOME_B, 0 },
+        { mAc_PROFILE_MYHOUSE, aSTR_TYPE_MYHOME, aSTR_PAL_MYHOME_C, 0 },
+        { mAc_PROFILE_MYHOUSE, aSTR_TYPE_MYHOME, aSTR_PAL_MYHOME_D, 0 },
     };
 
     STRUCTURE_ACTOR* str_actor;
@@ -112,7 +117,7 @@ static STRUCTURE_ACTOR* aSTR_setupActor_proc(GAME* game, mActor_name_t structure
     if (structure_name < NPC_HOUSE_END) {
         mNpc_SearchAnimalinfo(Save_Get(animals), NPC_HOUSE_ID_TO_NPC_ID(structure_name), ANIMAL_NUM_MAX);
         profile = mAc_PROFILE_HOUSE;
-    } else if (structure_name >= HOUSE0 && structure_name < SHOP0) {
+    } else if (ITEM_IS_PLAYER_HOUSE(structure_name)) {
         int idx = structure_name - STRUCTURE_START;
         profile = setupInfo_table[idx].profile;
     } else if (structure_name >= TRAIN_STATION && structure_name < TRAIN0) {

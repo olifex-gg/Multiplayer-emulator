@@ -339,6 +339,10 @@ extern void mFM_FieldInit(GAME_PLAY* play);
 extern void mFM_Field_dt();
 extern void mFM_SetBlockKindLoadCombi();
 extern void mFM_InitFgCombiSaveData(GAME* game);
+/* Multiplayer fork: give the town a second player-house acre for houses 4-7
+ * (rebuilds one plain flat acre from the house template). TRUE when the town
+ * has one afterwards. Needs the ROM loader (any time after boot). */
+extern int mFM_MakeSecondHouseAcre(void);
 extern void mFM_RenewalReserve();
 extern mActor_name_t mFM_GetReseveName(int bx, int bz);
 extern void mFM_toSummer();

@@ -235,7 +235,7 @@ static int mCoBG_MakeOneColumnCollisionData(mCoBG_column_c* col, mCoBG_UnitInfo_
             return TRUE;
         }
 
-        if (ut_info->item == DUMMY_MAILBOX0 || ut_info->item == DUMMY_MAILBOX1 || ut_info->item == DUMMY_MAILBOX2 || ut_info->item == DUMMY_MAILBOX3) {
+        if (ITEM_IS_DUMMY_MAILBOX(ut_info->item)) {
             col->pos.x = mFI_UT_WORLDSIZE_HALF_X_F + mFI_UT_WORLDSIZE_X_F * ut_info->ut_x;
             col->pos.z = mFI_UT_WORLDSIZE_HALF_Z_F + mFI_UT_WORLDSIZE_Z_F * ut_info->ut_z;
             col->pos.y = mCoBG_GetBgY_OnlyCenter_FromWpos2(col->pos, 0.0f);

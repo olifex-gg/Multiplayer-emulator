@@ -338,7 +338,7 @@ static void aMHS_set_bgOffset(ACTOR* actorx, int flag) {
 #ifndef BUGFIXES
     aMHS_make_bgOffset(offset_tbl, height_dt[Save_Get(homes[side_idx]).size_info.size], side_idx);
 #else
-    aMHS_make_bgOffset(offset_tbl, height_dt[Save_Get(homes[my_house->action & 3]).size_info.size], side_idx);
+    aMHS_make_bgOffset(offset_tbl, height_dt[Save_Get(homes[my_house->action & mHS_HOUSE_MASK]).size_info.size], side_idx);
 #endif
 
     ofs_p = offset_tbl;
@@ -355,7 +355,7 @@ static void aMHS_set_bgOffset(ACTOR* actorx, int flag) {
 }
 
 static int aMHS_light_ctrl(STRUCTURE_ACTOR* my_house) {
-    return mRmTp_Index2LightSwitchStatus((my_house->action & 3) * 2) != FALSE;
+    return mRmTp_Index2LightSwitchStatus((my_house->action & mHS_HOUSE_MASK) * 2) != FALSE;
 }
 
 static void aMHS_wait(STRUCTURE_ACTOR* my_house, GAME_PLAY* play) {
@@ -477,7 +477,7 @@ static void aMHS_actor_move(ACTOR* actorx, GAME* game) {
 static void aMHS_actor_init(ACTOR* actorx, GAME* game) {
     STRUCTURE_ACTOR* my_house = (STRUCTURE_ACTOR*)actorx;
 
-    mFI_SetFG_common(DUMMY_HOUSE0 + my_house->action, actorx->home.position, FALSE);
+    mFI_SetFG_common(DUMMY_HOUSE_ID(my_house->action), actorx->home.position, FALSE);
     aMHS_actor_move(actorx, game);
     actorx->mv_proc = &aMHS_actor_move;
 }

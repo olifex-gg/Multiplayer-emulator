@@ -203,6 +203,7 @@ static int mSDI_StartInitNew(GAME* game, int player_no, int malloc_flag) {
     Save_Set(dust_flag, FALSE);
     bzero(Save_GetPointer(island), sizeof(Island_c));
     mFM_InitFgCombiSaveData(g);
+    mFM_MakeSecondHouseAcre(); /* multiplayer fork: houses 4-7 */
 
     /* Remove trees */
     mSDI_PullTree();
@@ -312,6 +313,7 @@ static int mSDI_StartInitNew(GAME* game, int player_no, int malloc_flag) {
     Save_Set(dust_flag, FALSE);
     bzero(Save_GetPointer(island), sizeof(Island_c));
     mFM_InitFgCombiSaveData(g);
+    mFM_MakeSecondHouseAcre(); /* multiplayer fork: houses 4-7 */
 
     /* Remove trees */
     mSDI_PullTree();

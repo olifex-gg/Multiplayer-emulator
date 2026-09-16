@@ -57,9 +57,9 @@ static void aHNW_search_player(HANIWA_ACTOR* haniwa) {
 }
 
 static void aHNW_search_front(HANIWA_ACTOR* haniwa, int house_idx) {
-    s16 target_angle[mHS_HOUSE_NUM] = { 8000, -8000, 8000, -8000 };
+    s16 target_angle = (house_idx & 1) ? -8000 : 8000; /* left-hand houses face one way, right-hand the other */
 
-    chase_angle(&haniwa->common_actor_class.actor_class.shape_info.rotation.y, target_angle[house_idx], 0x0600);
+    chase_angle(&haniwa->common_actor_class.actor_class.shape_info.rotation.y, target_angle, 0x0600);
 }
 
 static int aHNW_check_keep_item(HANIWA_ACTOR* haniwa) {
@@ -526,13 +526,15 @@ static void aHNW_save_end_wait(HANIWA_ACTOR* haniwa, GAME* game) {
 }
 
 static void aHNW_pl_approach_door(HANIWA_ACTOR* haniwa, GAME* game) {
-    static f32 chk_posX[mHS_HOUSE_NUM] = { 2095.0f, 2385.0f, 2095.0f, 2385.0f };
-    static f32 chk_val[mHS_HOUSE_NUM] = { 1.0f, -1.0f, 1.0f, -1.0f };
-    static xyz_t goal_pos[mHS_HOUSE_NUM][2] = {
-        { { 2098.0f, 0.0f, 1540.0f }, { 2110.0f, 0.0f, 1474.0f } },
-        { { 2382.0f, 0.0f, 1540.0f }, { 2369.0f, 0.0f, 1474.0f } },
-        { { 2098.0f, 0.0f, 1820.0f }, { 2110.0f, 0.0f, 1755.0f } },
-        { { 2382.0f, 0.0f, 1820.0f }, { 2369.0f, 0.0f, 1755.0f } },
+    /* Offsets from the house acre's origin (multiplayer fork: the second
+     * acre uses the same layout, so the same table). */
+    static f32 chk_posX[mHS_HOUSES_PER_ACRE] = { 175.0f, 465.0f, 175.0f, 465.0f };
+    static f32 chk_val[mHS_HOUSES_PER_ACRE] = { 1.0f, -1.0f, 1.0f, -1.0f };
+    static xyz_t goal_pos[mHS_HOUSES_PER_ACRE][2] = {
+        { { 178.0f, 0.0f, 260.0f }, { 190.0f, 0.0f, 194.0f } },
+        { { 462.0f, 0.0f, 260.0f }, { 449.0f, 0.0f, 194.0f } },
+        { { 178.0f, 0.0f, 540.0f }, { 190.0f, 0.0f, 475.0f } },
+        { { 462.0f, 0.0f, 540.0f }, { 449.0f, 0.0f, 475.0f } },
     };
 
     ACTOR* playerx = GET_PLAYER_ACTOR_GAME_ACTOR(game);
@@ -544,18 +546,26 @@ static void aHNW_pl_approach_door(HANIWA_ACTOR* haniwa, GAME* game) {
 #endif
     if (playerx != NULL) {
         int house_idx = haniwa->house_idx;
-        int stage = ((chk_posX[house_idx] - playerx->world.position.x) * chk_val[house_idx]) <= 0.0f;
-        xyz_t* goal = goal_pos[house_idx] + stage;
+        int local = house_idx % mHS_HOUSES_PER_ACRE;
+        f32 ox, oz;
+        int stage;
+        xyz_t goal;
+
+        mHS_house_origin(house_idx, &ox, &oz);
+        stage = ((ox + chk_posX[local] - playerx->world.position.x) * chk_val[local]) <= 0.0f;
+        goal = goal_pos[local][stage];
+        goal.x += ox;
+        goal.z += oz;
 
         if (haniwa->player_approach_door_stage != stage &&
-            mPlib_request_main_demo_walk_type1(game, goal->x, goal->z, 3.0f, FALSE)) {
+            mPlib_request_main_demo_walk_type1(game, goal.x, goal.z, 3.0f, FALSE)) {
             haniwa->player_approach_door_stage = stage;
         }
 
-        mPlib_Set_goal_player_demo_walk(goal->x, goal->z, 3.0f);
+        mPlib_Set_goal_player_demo_walk(goal.x, goal.z, 3.0f);
 
         if (haniwa->door_approach_frame > 160) {
-            mActor_name_t house_item = HOUSE0 + haniwa->house_idx;
+            mActor_name_t house_item = HOUSE_ID(haniwa->house_idx);
             MY_HOUSE_ACTOR* house_actor = (MY_HOUSE_ACTOR*)Actor_info_fgName_search(
                 &((GAME_PLAY*)game)->actor_info, house_item, ACTOR_PART_ITEM);
 
@@ -563,14 +573,14 @@ static void aHNW_pl_approach_door(HANIWA_ACTOR* haniwa, GAME* game) {
                 house_actor->structure_class.actor_class.world.angle.z = 1;
                 aHNW_setupAction(haniwa, game, aHNW_ACTION_WAIT);
             }
-        } else if (stage == 1 && search_position_distanceXZ(goal, &playerx->world.position) < 3.0f) {
+        } else if (stage == 1 && search_position_distanceXZ(&goal, &playerx->world.position) < 3.0f) {
             aHNW_setupAction(haniwa, game, aHNW_ACTION_DOOR_OPEN_WAIT);
         }
     }
 }
 
 static void aHNW_door_open_wait(HANIWA_ACTOR* haniwa, GAME* game) {
-    mActor_name_t house_item = HOUSE0 + haniwa->house_idx;
+    mActor_name_t house_item = HOUSE_ID(haniwa->house_idx);
     MY_HOUSE_ACTOR* house_actor =
         (MY_HOUSE_ACTOR*)Actor_info_fgName_search(&((GAME_PLAY*)game)->actor_info, house_item, ACTOR_PART_ITEM);
 
@@ -589,7 +599,7 @@ static void aHNW_door_open_wait(HANIWA_ACTOR* haniwa, GAME* game) {
 }
 
 static void aHNW_door_open_timer(HANIWA_ACTOR* haniwa, GAME* game) {
-    mActor_name_t house_item = HOUSE0 + haniwa->house_idx;
+    mActor_name_t house_item = HOUSE_ID(haniwa->house_idx);
     MY_HOUSE_ACTOR* house_actor =
         (MY_HOUSE_ACTOR*)Actor_info_fgName_search(&((GAME_PLAY*)game)->actor_info, house_item, ACTOR_PART_ITEM);
 
@@ -778,7 +788,7 @@ static void aHNW_actor_init(ACTOR* actor, GAME* game) {
     HANIWA_ACTOR* haniwa = (HANIWA_ACTOR*)actor;
     int house_idx = haniwa->house_idx;
 
-    mFI_SetFG_common((mActor_name_t)(house_idx + DUMMY_HANIWA0), actor->world.position, FALSE);
+    mFI_SetFG_common(DUMMY_HANIWA_ID(house_idx), actor->world.position, FALSE);
     actor->mv_proc = &aHNW_actor_move;
     actor->dw_proc = &aHNW_actor_draw;
     aHNW_setupAction(haniwa, game, aHNW_ACTION_WAIT);

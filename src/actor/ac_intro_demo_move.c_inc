@@ -101,11 +101,11 @@ static void aID_birth_rcn_guide(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play) {
     ACTOR* rcn_actor;
 
     if (intro_demo->_1A4 == TRUE) {
-        house_idx = Common_Get(last_field_id) - mFI_FIELD_PLAYER0_ROOM;
+        house_idx = mFI_GET_PLAYER_ROOM_NO(Common_Get(last_field_id));
         intro_demo->house_idx = house_idx;
-        ux = restart_ux[house_idx];
-        uz = restart_uz[house_idx];
-        ofsX = restartOffsetX[house_idx];
+        ux = restart_ux[house_idx % mHS_HOUSES_PER_ACRE]; /* the second acre has the same layout */
+        uz = restart_uz[house_idx % mHS_HOUSES_PER_ACRE];
+        ofsX = restartOffsetX[house_idx % mHS_HOUSES_PER_ACRE];
         ofsZ = 8.0f;
         if (mPr_NullCheckPersonalID(&Save_Get(homes[house_idx]).ownerID) == TRUE) {
             param = aID_STATE_TAKEN_HOUSE;

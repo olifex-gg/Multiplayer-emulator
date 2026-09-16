@@ -35,6 +35,8 @@
 #include "m_private.h"
 #include "m_npc.h"
 #include "m_cockroach.h"
+#include "m_field_make.h"
+#include "m_scene_table.h"
 #include "dolphin/os.h"
 #include <string.h>
 #include <stddef.h>
@@ -309,16 +311,22 @@ extern void pc_save_convert_fixup_loaded(void) {
 }
 
 extern void pc_save_convert_late_fixup(void) {
+    static int s_acre_checked;
     int i;
 
-    if (!s_late_fixup_pending) {
-        return;
+    if (s_late_fixup_pending) {
+        s_late_fixup_pending = FALSE;
+        for (i = LEGACY_PLAYER_NUM; i < mHS_HOUSE_NUM; i++) {
+            mHm_LoadHaniwaDefaultMessage(i);
+        }
+        OSReport("[save] eight-resident town: the new houses' gyroid messages loaded\n");
     }
-    s_late_fixup_pending = FALSE;
-    for (i = LEGACY_PLAYER_NUM; i < mHS_HOUSE_NUM; i++) {
-        mHm_LoadHaniwaDefaultMessage(i);
+    /* Any town without a second house acre gets one (a converted town, or
+     * one saved by the first eight-resident build); a no-op otherwise. */
+    if (!s_acre_checked && Save_Get(scene_no) == SCENE_FG) {
+        s_acre_checked = TRUE;
+        mFM_MakeSecondHouseAcre();
     }
-    OSReport("[save] eight-resident town: the new houses' gyroid messages loaded\n");
 }
 
 #endif /* TARGET_PC */

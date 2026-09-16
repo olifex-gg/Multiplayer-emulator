@@ -98,7 +98,7 @@ static void aMBX_actor_ct(ACTOR* actorx, GAME* game) {
 
     MAILBOX_ACTOR* actor = (MAILBOX_ACTOR*)actorx;
     int season = Common_Get(time.season) == mTM_SEASON_WINTER;
-    int idx = actorx->npc_id - ACTOR_PROP_MAILBOX0;
+    int idx = MAILBOX_IDX(actorx->npc_id);
     cKF_Skeleton_R_c* skeleton_p = aMBX_skeleton[season];
 
     cKF_SkeletonInfo_R_ct(&actor->kf0, skeleton_p, NULL, actor->joint0, actor->morph0);
@@ -107,7 +107,7 @@ static void aMBX_actor_ct(ACTOR* actorx, GAME* game) {
     actor->anim_idx0 = aMBX_ANIME_NUM;
     actor->arrange_idx = idx;
     actor->anim_idx1 = aMBX_ANIME_NUM;
-    actorx->shape_info.rotation.y = angle_table[idx];
+    actorx->shape_info.rotation.y = angle_table[idx & 1]; /* left-hand and right-hand houses, both acres */
     aMBX_check_flag(actor);
     actor->kf0.frame_control.current_frame = actor->kf0.frame_control.end_frame;
 }

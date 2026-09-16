@@ -48,7 +48,7 @@ static int mCoBG_it_is_stone(mActor_name_t item, ACTOR* actorx) {
 }
 
 static int mCoBG_it_is_post(mActor_name_t item, ACTOR* actorx) {
-    if (item == DUMMY_MAILBOX0 || item == DUMMY_MAILBOX1 || item == DUMMY_MAILBOX2 || item == DUMMY_MAILBOX3) {
+    if (ITEM_IS_DUMMY_MAILBOX(item)) {
         return TRUE;
     }
 

@@ -77,6 +77,19 @@ static void aPMAN_actor_ct(ACTOR* actorx, GAME* game) {
         actor->npc_class.condition_info.hide_flg = FALSE;
         actor->npc_class.condition_info.demo_flg = aNPC_COND_DEMO_SKIP_TALK_CHECK | aNPC_COND_DEMO_SKIP_MOVE_CIRCLE_REV | aNPC_COND_DEMO_SKIP_MOVE_RANGE_CHECK;
         actor->now_idx = 6;
+        /* Which house acre (multiplayer fork: two). Born by the acre the
+         * player is in, which the spawn code guarantees is a house acre. */
+        {
+            int pbx = ((GAME_PLAY*)game)->block_table.block_x;
+            int pbz = ((GAME_PLAY*)game)->block_table.block_z;
+            int acre = mHS_house_acre_of_block(pbx, pbz);
+            if (acre < 0) {
+                acre = 0;
+            }
+            actor->house_base = (s8)(acre * mHS_HOUSES_PER_ACRE);
+            mHS_house_origin(actor->house_base, &actor->origin_x, &actor->origin_z);
+        }
+        actor->delivery_idx = 0;
         actor->delivery_idx = aPMAN_set_delivery_idx(actor);
         actor->move_idx = aPMAN_set_move_idx(actor);
         actor->npc_class.palActorIgnoreTimer = -1;
@@ -89,7 +102,9 @@ static void aPMAN_actor_ct(ACTOR* actorx, GAME* game) {
             int pbx;
             int pbz;
 
-            mFI_BlockKind2BkNum(&bx, &bz, mRF_BLOCKKIND_PLAYER);
+            if (mHS_house_acre_block(actor->house_base / mHS_HOUSES_PER_ACRE, &bx, &bz) == FALSE) {
+                mFI_BlockKind2BkNum(&bx, &bz, mRF_BLOCKKIND_PLAYER);
+            }
             actorx->block_x = bx;
             actorx->block_z = bz;
             mFI_BlockKind2BkNum(&pbx, &pbz, mRF_BLOCKKIND_POSTOFFICE);

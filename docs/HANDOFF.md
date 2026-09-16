@@ -302,13 +302,36 @@ Stage 1, done and tested: the save, the server, the tools.
   `ACNET_HOUSE_ARRANGEMENT_OFFSET`); e2e has 25 checks (step 10 fills eight and refuses
   the ninth, step 25 serves and upgrades a four-resident town).
 - *The launcher's waiting room* shows eight rows (window 640 tall, 30 px chips).
-- *Still to do* (stages 2-4): the second house acre with houses 4-7 (new ids `HOUSE4..7`,
-  `ACTOR_PROP_MAILBOX4..7`, `ACTOR_PROP_HANIWA4..7` and their DUMMY ids, one flat acre
-  rebuilt from the house template, the hardcoded door positions in
-  `ac_npc_restart_schedule`, `ac_npc_p_sel2_talk`, `ac_haniwa_move`, `ac_npc_post_man_move`,
-  `ac_intro_demo_move` made acre-relative, statues, lights); the name menu at the station
-  (`ac_npc_p_sel2_talk.c_inc` builds at most four names + "I'm new" in a six-entry choice
-  window -- page it like the card list); then option C's seats.
+- *Stage 2, the second house acre, done and tested.* Houses 4-7 have their own ids at the
+  ends of the bands (`HOUSE4..7` = `STRUCTURE_START + 83..86`, `ACTOR_PROP_MAILBOX4..7` and
+  `ACTOR_PROP_HANIWA4..7` = `ACTOR_PROP_START + 19..26`, `DUMMY_HOUSE4..7`,
+  `DUMMY_MAILBOX4..7`, `DUMMY_HANIWA4..7` = 0xF150-0xF15B; the setup, set-type, prop-profile
+  and gyroid-voice tables grew to match) and `HOUSE_ID/HOUSE_IDX`, `MAILBOX_ID/IDX`,
+  `HANIWA_ID/IDX`, `DUMMY_*_ID`, `ITEM_IS_PLAYER_HOUSE`, `ITEM_IS_DUMMY_MAILBOX` in
+  `m_name_table.h` are the only way code converts between a house index and an id. The
+  acre itself: `mFM_MakeSecondHouseAcre` (m_field_make.c) picks the first plain flat acre
+  after block (3,2) in row order and not next to it, gives it a house-acre combination
+  (a different look from the first acre's), copies that combination's item template from
+  the ROM with the ids of houses 4-7, clears its buried items and refreshes the acre-kind
+  table. It runs at town creation (`m_start_data_init`) and once per session on the first
+  play frame (`pc_save_convert_late_fixup`), so a town saved by any earlier build gets its
+  acre the first time it is played. `mHS_house_acre_block(1, ...)` finds it (the other
+  acre of type `mFM_BLOCK_TYPE_PLAYER_HOUSE`), `mHS_house_origin(house)` gives the acre's
+  world origin, and every table of door/gyroid/mailbox positions is now an offset from
+  that origin (`ac_npc_restart_schedule`, `ac_npc_p_sel2_talk`, `ac_haniwa_move`,
+  `ac_intro_demo_move`, `ac_npc_post_man_move`). Pete the postman works per acre: born in
+  whichever house acre the player is in (`house_base`, `origin_x/z` in `NPC_POST_MAN`),
+  delivering to that acre's four mailboxes with the original route. The statues by the
+  station have four more spots (rows further south; not yet seen in play). Villager
+  memory is unchanged. On the rig, the old test town got its acre at block (1,3) with
+  combination 215; the town map shows both house clusters (B-3 and C-1), and the stored
+  town holds `0x5853-0x5856`, `0xA013-0xA016`, `0xA017-0xA01A` in that acre's cells with no
+  runtime ids. The map's "press X" page is the town map; the menu's L/R only cycle the
+  right-hand tabs.
+- *Still to do*: the name menu at the station (`ac_npc_p_sel2_talk.c_inc` builds at most
+  four names + "I'm new" in a six-entry choice window -- page it like the card list; today
+  a fifth name cannot be chosen and a full town shows an empty menu), a fifth resident
+  moving into the second acre end to end, then option C's seats.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

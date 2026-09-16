@@ -2091,7 +2091,7 @@ static int mAGrw_CheckHide36(mActor_name_t item) {
 
 static int mAGrw_CheckCancelLeft45(mActor_name_t item) {
     if (ITEM_NAME_GET_TYPE(item) == NAME_TYPE_STRUCT) {
-        if ((item == HOUSE0) || (item == HOUSE2)) {
+        if (ITEM_IS_PLAYER_HOUSE(item) && (HOUSE_IDX(item) & 1) == 0) { /* left-hand houses, either acre */
             return TRUE;
         }
     }
@@ -2101,7 +2101,7 @@ static int mAGrw_CheckCancelLeft45(mActor_name_t item) {
 
 static int mAGrw_CheckCancelRight45(mActor_name_t item) {
     if (ITEM_NAME_GET_TYPE(item) == NAME_TYPE_STRUCT) {
-        if ((item == HOUSE1) || (item == HOUSE3)) {
+        if (ITEM_IS_PLAYER_HOUSE(item) && (HOUSE_IDX(item) & 1) == 1) { /* right-hand houses */
             return TRUE;
         }
     }

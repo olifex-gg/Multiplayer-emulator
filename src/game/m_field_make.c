@@ -1403,6 +1403,116 @@ static void mFM_SetBlockKind(u8* type_p, int* kind_p, mFM_combination_c* combi_p
     }
 }
 
+/* Multiplayer fork: the second player-house acre, for houses 4-7. The first
+ * house acre is fixed at block (3,2) and every "find the house acre" scan
+ * returns the first match in row order, so the second one is placed after it
+ * in that order: rows below first, then to its right. It takes one of the
+ * house-acre combinations (a different look from the first acre's), that
+ * combination's item template with the ids of houses 4-7, and no buried
+ * items. Nothing else about the town changes. */
+static void mFM_RemapHouseIds(mActor_name_t* items, int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        mActor_name_t v = items[i];
+        if (v >= HOUSE0 && v <= HOUSE3) {
+            items[i] = HOUSE_ID(v - HOUSE0 + mHS_HOUSES_PER_ACRE);
+        } else if (v >= ACTOR_PROP_MAILBOX0 && v <= ACTOR_PROP_MAILBOX3) {
+            items[i] = MAILBOX_ID(v - ACTOR_PROP_MAILBOX0 + mHS_HOUSES_PER_ACRE);
+        } else if (v >= ACTOR_PROP_HANIWA0 && v <= ACTOR_PROP_HANIWA3) {
+            items[i] = HANIWA_ID(v - ACTOR_PROP_HANIWA0 + mHS_HOUSES_PER_ACRE);
+        }
+    }
+}
+
+static int mFM_BlockTypeOfSave(int bx, int bz) {
+    int combi = Save_Get(combi_table[bz][bx]).combination_type;
+    if (combi < 0 || combi >= data_combi_table_number) return -1;
+    return data_combi_table[combi].type;
+}
+
+extern int mFM_MakeSecondHouseAcre(void) {
+    static const int order[][2] = { /* bx, bz: after the first acre in row order, and not next to
+                                     * it (a loaded neighbour would be rebuilt under its actors) */
+        { 3, 4 }, { 2, 4 }, { 4, 4 }, { 1, 4 }, { 5, 4 },
+        { 3, 5 }, { 2, 5 }, { 4, 5 }, { 1, 5 }, { 5, 5 },
+        { 1, 3 }, { 5, 3 }, { 5, 2 },
+        { 3, 6 }, { 2, 6 }, { 4, 6 }, { 1, 6 }, { 5, 6 },
+        { 2, 3 }, { 4, 3 }, { 3, 3 }, { 4, 2 },
+    };
+    int first_combi = Save_Get(combi_table[mHS_FIRST_HOUSE_ACRE_BZ][mHS_FIRST_HOUSE_ACRE_BX]).combination_type;
+    int bx, bz, i, chosen_bx = -1, chosen_bz = -1, combi_idx = -1;
+    mFM_fg_data_c* fg_data_p;
+    mFM_fg_data_c* src_data = NULL;
+    size_t fg_datasize, fg_datasize_align;
+    int fg_data_num, fg_id;
+
+    /* Already there? */
+    for (bz = 1; bz <= FG_BLOCK_Z_NUM; bz++) {
+        for (bx = 1; bx <= FG_BLOCK_X_NUM; bx++) {
+            if (bx == mHS_FIRST_HOUSE_ACRE_BX && bz == mHS_FIRST_HOUSE_ACRE_BZ) continue;
+            if (mFM_BlockTypeOfSave(bx, bz) == mFM_BLOCK_TYPE_PLAYER_HOUSE) return TRUE;
+        }
+    }
+    for (i = 0; i < (int)(sizeof(order) / sizeof(order[0])) && chosen_bx < 0; i++) {
+        if (mFM_BlockTypeOfSave(order[i][0], order[i][1]) == mFM_BLOCK_TYPE_FLAT) {
+            chosen_bx = order[i][0];
+            chosen_bz = order[i][1];
+        }
+    }
+    if (chosen_bx < 0) {
+        OSReport("[town] no plain flat acre left for a second house acre\n");
+        return FALSE;
+    }
+    for (i = 0; i < data_combi_table_number; i++) {
+        if (data_combi_table[i].type == mFM_BLOCK_TYPE_PLAYER_HOUSE && i != first_combi) {
+            combi_idx = i;
+            break;
+        }
+    }
+    if (combi_idx < 0) combi_idx = first_combi;
+
+    /* The item template, straight from the ROM's field data. */
+    fg_datasize = JW_GetResSizeFileNo(RESOURCE_FGDATA);
+    fg_datasize_align = ALIGN_NEXT(fg_datasize, 32);
+    fg_data_p = (mFM_fg_data_c*)zelda_malloc_align(fg_datasize_align, 32);
+    if (fg_data_p == NULL) return FALSE;
+    fg_data_num = fg_datasize / sizeof(mFM_fg_data_c);
+    _JW_GetResourceAram(JW_GetAramAddress(RESOURCE_FGDATA), (u8*)fg_data_p, fg_datasize_align);
+#ifdef TARGET_PC
+    mFM_ByteSwapFGData(fg_data_p, fg_data_num);
+#endif
+    fg_id = data_combi_table[combi_idx].fg_id;
+    for (i = 0; i < fg_data_num; i++) {
+        if (fg_data_p[i].fg_id == fg_id) {
+            src_data = &fg_data_p[i];
+            break;
+        }
+    }
+    if (src_data == NULL) {
+        zelda_free(fg_data_p);
+        OSReport("[town] the house acre template %d is missing from the field data\n", fg_id);
+        return FALSE;
+    }
+    {
+        mFM_fg_c* fg_block = Save_GetPointer(fg[chosen_bz - 1][chosen_bx - 1]);
+        int fg_index = (chosen_bx - 1) + (chosen_bz - 1) * FG_BLOCK_X_NUM;
+        int utz;
+        mFM_FgUtDataSet(fg_block->items[0], src_data->items[0]);
+        mFM_RemapHouseIds(fg_block->items[0], UT_X_NUM * UT_Z_NUM);
+        for (utz = 0; utz < UT_Z_NUM; utz++) {
+            Save_Set(deposit[fg_index][utz], 0);
+        }
+    }
+    zelda_free(fg_data_p);
+    Save_Get(combi_table[chosen_bz][chosen_bx]).combination_type = combi_idx;
+    if (mFI_CheckFieldData()) {
+        mFM_SetBlockKindLoadCombi(); /* the runtime acre-kind table follows the save */
+    }
+    OSReport("[town] second house acre made at block (%d,%d) with combination %d (houses 4-7)\n", chosen_bx, chosen_bz,
+             combi_idx);
+    return TRUE;
+}
+
 extern void mFM_SetBlockKindLoadCombi() {
     mFM_SetBlockKind(g_block_type_p, g_block_kind_p, Save_Get(combi_table[0]), data_combi_table, BLOCK_TOTAL_NUM);
 }

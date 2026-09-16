@@ -1,23 +1,39 @@
+/* His route and the mailboxes, as offsets from the house acre's origin
+ * (multiplayer fork: the same route serves the second house acre). */
 // clang-format off
-static xyz_t aPMAN_move_pos[7] = {
-    {2172.0f, 0.0f, 1452.0f},
-    {2308.0f, 0.0f, 1452.0f},
-    {2172.0f, 0.0f, 1732.0f},
-    {2308.0f, 0.0f, 1732.0f},
-    {2180.0f, 0.0f, 1620.0f},
-    {2300.0f, 0.0f, 1620.0f},
-    {2240.0f, 0.0f, 1620.0f},
+static xyz_t aPMAN_move_pos_rel[7] = {
+    {252.0f, 0.0f, 172.0f},
+    {388.0f, 0.0f, 172.0f},
+    {252.0f, 0.0f, 452.0f},
+    {388.0f, 0.0f, 452.0f},
+    {260.0f, 0.0f, 340.0f},
+    {380.0f, 0.0f, 340.0f},
+    {320.0f, 0.0f, 340.0f},
 };
 // clang-format on
 
 // clang-format off
-static xyz_t aPMAN_mailbox_pos[4] = {
-    {2140.0f, 0.0f, 1420.0f},
-    {2340.0f, 0.0f, 1420.0f},
-    {2140.0f, 0.0f, 1700.0f},
-    {2340.0f, 0.0f, 1700.0f},
+static xyz_t aPMAN_mailbox_pos_rel[4] = {
+    {220.0f, 0.0f, 140.0f},
+    {420.0f, 0.0f, 140.0f},
+    {220.0f, 0.0f, 420.0f},
+    {420.0f, 0.0f, 420.0f},
 };
 // clang-format on
+
+static xyz_t aPMAN_move_pos_at(NPC_POST_MAN* actor, int idx) {
+    xyz_t p = aPMAN_move_pos_rel[idx];
+    p.x += actor->origin_x;
+    p.z += actor->origin_z;
+    return p;
+}
+
+static xyz_t aPMAN_mailbox_pos_at(NPC_POST_MAN* actor, int idx) {
+    xyz_t p = aPMAN_mailbox_pos_rel[idx];
+    p.x += actor->origin_x;
+    p.z += actor->origin_z;
+    return p;
+}
 
 static void aPMAN_BGcheck(ACTOR* actorx) {
     NPC_POST_MAN* actor = (NPC_POST_MAN*)actorx;
@@ -105,18 +121,18 @@ static int aPMAN_check_delivery(int arrange_idx) {
 }
 
 static s8 aPMAN_set_delivery_idx(NPC_POST_MAN* actor) {
-    int idx = actor->delivery_idx;
+    int idx = actor->delivery_idx; /* a house within his acre, 0..3 */
 
     if (idx != -1) {
-        mHm_hs_c* home = Save_GetPointer(homes[idx]);
         int i;
 
-        for (i = idx; i < mHS_HOUSE_NUM; i++) {
-            if (!mPr_NullCheckPersonalID(&home->ownerID) && aPMAN_check_delivery(i) == TRUE) {
-                return i;
-            }
+        for (i = idx; i < mHS_HOUSES_PER_ACRE; i++) {
+            int house = actor->house_base + i;
+            mHm_hs_c* home = Save_GetPointer(homes[house]);
 
-            home++;
+            if (!mPr_NullCheckPersonalID(&home->ownerID) && aPMAN_check_delivery(house) == TRUE) {
+                return (s8)i;
+            }
         }
     }
 
@@ -125,7 +141,7 @@ static s8 aPMAN_set_delivery_idx(NPC_POST_MAN* actor) {
 
 static s8 aPMAN_set_move_idx(NPC_POST_MAN* actor) {
     // clang-format off
-    static s8 move_idx[mHS_HOUSE_NUM][7] = {
+    static s8 move_idx[mHS_HOUSES_PER_ACRE][7] = {
         {0, 0, 4, 4, 0, 1, 4},
         {1, 1, 5, 5, 1, 1, 5},
         {4, 5, 2, 2, 2, 2, 2},
@@ -138,7 +154,8 @@ static s8 aPMAN_set_move_idx(NPC_POST_MAN* actor) {
 
 static int aPMAN_search_angle(NPC_POST_MAN* actor) {
     int idx = actor->move_idx;
-    s16 target_angle = search_position_angleY(&actor->npc_class.actor_class.world.position, &aPMAN_move_pos[idx]);
+    xyz_t target = aPMAN_move_pos_at(actor, idx);
+    s16 target_angle = search_position_angleY(&actor->npc_class.actor_class.world.position, &target);
     s16* angle_p = &actor->npc_class.actor_class.shape_info.rotation.y;
     int ret = chase_angle(angle_p, target_angle, aNPC_dt_angle_step(DEG2SHORT_ANGLE2(5.625f)));
 
@@ -147,8 +164,8 @@ static int aPMAN_search_angle(NPC_POST_MAN* actor) {
 }
 
 static void aPMAN_order_open_mailbox(NPC_POST_MAN* actor, GAME_PLAY* play) {
-    int idx = actor->delivery_idx;
-    ACTOR* mailbox = Actor_info_fgName_search(&play->actor_info, ACTOR_PROP_MAILBOX0 + idx, ACTOR_PART_ITEM);
+    int idx = actor->house_base + actor->delivery_idx;
+    ACTOR* mailbox = Actor_info_fgName_search(&play->actor_info, MAILBOX_ID(idx), ACTOR_PART_ITEM);
 
     if (mailbox != NULL) {
         ((MAILBOX_ACTOR*)mailbox)->req = aMBX_REQUEST_DELIVERY;
@@ -175,7 +192,7 @@ static void aPMAN_eff_wings(ACTOR* actorx) {
 }
 
 static void aPMAN_enter(NPC_POST_MAN* actor, GAME_PLAY* play) {
-    static xyz_t landing_pos = { 2240.0f, 0.0f, 1620.0f };
+    xyz_t landing_pos = aPMAN_move_pos_at(actor, 6); /* the middle of the acre */
     xyz_t* pos_p = &actor->npc_class.actor_class.world.position;
 
     {
@@ -248,9 +265,10 @@ static void aPMAN_turn(NPC_POST_MAN* actor, GAME_PLAY* play) {
 static void aPMAN_walk(NPC_POST_MAN* actor, GAME_PLAY* play) {
     int idx = actor->move_idx;
     f32 dist;
+    xyz_t target = aPMAN_move_pos_at(actor, idx);
 
     aPMAN_search_angle(actor);
-    dist = search_position_distanceXZ(&actor->npc_class.actor_class.world.position, &aPMAN_move_pos[idx]);
+    dist = search_position_distanceXZ(&actor->npc_class.actor_class.world.position, &target);
 
     if (ABS(dist) < 1.0f) {
         actor->now_idx = actor->move_idx;
@@ -264,7 +282,8 @@ static void aPMAN_walk(NPC_POST_MAN* actor, GAME_PLAY* play) {
 
 static void aPMAN_delivery_turn(NPC_POST_MAN* actor, GAME_PLAY* play) {
     int idx = actor->delivery_idx;
-    s16 target_angle = search_position_angleY(&actor->npc_class.actor_class.world.position, &aPMAN_mailbox_pos[idx]);
+    xyz_t target = aPMAN_mailbox_pos_at(actor, idx);
+    s16 target_angle = search_position_angleY(&actor->npc_class.actor_class.world.position, &target);
     s16* angle_p = &actor->npc_class.actor_class.shape_info.rotation.y;
 
     if (chase_angle(angle_p, target_angle, aNPC_dt_angle_step(DEG2SHORT_ANGLE2(5.625f))) == TRUE) {
@@ -333,10 +352,15 @@ static void aPMAN_fly_up(NPC_POST_MAN* actor, GAME_PLAY* play) {
 
 static void aPMAN_exit(NPC_POST_MAN* actor, GAME_PLAY* play) {
     // clang-format off
-    static xyz_t exit_pos[] = {
-        { 1280.0f, 0.0f, 1620.0f },
-        { 3200.0f, 0.0f, 1620.0f },
+    static xyz_t exit_pos_rel[] = { /* an acre to the left, or two to the right */
+        { -640.0f, 0.0f, 340.0f },
+        { 1280.0f, 0.0f, 340.0f },
     };
+    xyz_t exit_pos[2];
+    exit_pos[0] = exit_pos_rel[0];
+    exit_pos[1] = exit_pos_rel[1];
+    exit_pos[0].x += actor->origin_x; exit_pos[0].z += actor->origin_z;
+    exit_pos[1].x += actor->origin_x; exit_pos[1].z += actor->origin_z;
     // clang-format on
 
     int idx = actor->post_office_direct;
@@ -423,9 +447,9 @@ static void aPMAN_walk_init(NPC_POST_MAN* actor, GAME_PLAY* play) {
 
 static void aPMAN_delivery_init(NPC_POST_MAN* actor, GAME_PLAY* play) {
     aPMAN_clear_xz_spd(actor);
-    mPO_delivery_one_address(actor->delivery_idx);
+    mPO_delivery_one_address(actor->house_base + actor->delivery_idx);
     aPMAN_order_open_mailbox(actor, play);
-    if (actor->delivery_idx < 3) {
+    if (actor->delivery_idx < mHS_HOUSES_PER_ACRE - 1) {
         actor->delivery_idx++;
         actor->delivery_idx = aPMAN_set_delivery_idx(actor);
     } else {

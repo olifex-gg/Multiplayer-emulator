@@ -93,8 +93,8 @@ static u8* mouth_tbl[2 * (mPr_SEX_NUM * mPr_FACE_TYPE_NUM)] = {
     obj_w_douzou_gm2_tex_pic_i4, obj_w_douzou_gm1_tex_pic_i4, obj_w_douzou_gm1_tex_pic_i4, obj_w_douzou_gm1_tex_pic_i4,
 };
 
-static f32 zpostbl[mHS_HOUSE_NUM] = { 200.0f, 200.0f, 280.0f, 280.0f };
-static f32 xpostbl[mHS_HOUSE_NUM] = { 0.0f, 200.0f, -40.0f, 160.0f };
+static f32 zpostbl[mHS_HOUSE_NUM] = { 200.0f, 200.0f, 280.0f, 280.0f, 360.0f, 360.0f, 440.0f, 440.0f };
+static f32 xpostbl[mHS_HOUSE_NUM] = { 0.0f, 200.0f, -40.0f, 160.0f, 0.0f, 200.0f, -40.0f, 160.0f };
 
 extern Vtx obj_s_douzou_shadow_v[];
 extern Gfx obj_s_douzou_shadow_model[];

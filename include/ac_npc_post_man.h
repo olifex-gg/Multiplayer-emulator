@@ -31,6 +31,10 @@ struct npc_post_man_actor_s {
     u8 talk_permit;
     u8 talk_type;
     f32 ground_y;
+    /* multiplayer fork: which house acre he is delivering in */
+    s8 house_base;  /* 0 or 4: delivery_idx is a house within the acre */
+    f32 origin_x;   /* that acre's world origin; the route tables are offsets */
+    f32 origin_z;
 };
 
 extern ACTOR_PROFILE Npc_Post_Man_Profile;

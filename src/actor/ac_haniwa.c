@@ -66,7 +66,7 @@ static void aHNW_actor_ct(ACTOR* actor, GAME* game) {
 
     haniwa->bank_ram_start = ((GAME_PLAY*)game)->object_exchange.banks[actor->data_bank_id].ram_start;
     haniwa->common_actor_class.anime.anime_no = 2;
-    haniwa->house_idx = actor->npc_id - ACTOR_PROP_HANIWA0;
+    haniwa->house_idx = HANIWA_IDX(actor->npc_id);
     actor->talk_distance = 43.0f;
 }
 
