@@ -19,6 +19,7 @@
 extern "C" {
 #endif
 
+
 /* --- Dirty flags for conditional uniform upload --- */
 #define PC_GX_DIRTY_PROJECTION  (1u << 0)
 #define PC_GX_DIRTY_MODELVIEW   (1u << 1)

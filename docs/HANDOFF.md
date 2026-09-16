@@ -209,8 +209,25 @@ build opened the inventory after every sent line: the Enter that sent it was sti
 when `PADRead` polled the keyboard, and Enter is Start. `pc_chat_blocks_pad()` now keeps
 the pad blocked until that key's `SDL_KEYUP` (with a 1.5 s fallback), and `pc_main.c`
 forwards key-ups to the chat for it. Names come from the server's login names
-(`pc_net_peer_name`). Rig: `[chat] Owen: hello alana` in both logs, drawn top-left in
-both games, no inventory afterwards.
+(`pc_net_peer_name`). Rig: `[chat] Owen: hello alana` in both logs, no inventory
+afterwards. *Bubbles (2026-09-16):* the message is shown in the game's own thought
+bubble, not a corner list and not a homemade box (the user was clear on that). It is
+the item-name bubble of `m_watch_my_step.c`, the one that appears over your head when
+you stand on an item: `src/game/m_chat_bubble.c` (PC build only) copies its state
+machine and draw code exactly -- modes 1/2 pop the two dots in two frames apart
+(`fki_win_w1T/w2T`), mode 3 grows the bubble (`fki_win_w3T`, scale from the text width:
+`width * 0.875 - 17.5`, over 122.5) and eases the opacity, mode 4 fades (`fki_win_w4`);
+placement to the upper left/right and above/below is decided from the character's
+projected position exactly as the game does; the text is `mFont_SetLineStrings` at
+0.875 in the game font, colour (45,45,35), at the game's own text position formula.
+One instance per resident, anchored through `Puppet_chat_actor(play, slot)` (our own
+character, or that resident's puppet), driven by `mCB_move`/`mCB_draw` from `play_main`
+right after `watch_my_step_move`/`_draw`. ASCII becomes the game's character set through
+the same table the PC text editor uses (unsupported punctuation becomes '?'). A message
+wider than the bubble (about 150 px of text) is paged whole-word by whole-word, each
+page 1.5 s plus 0.12 s a character, the last a second longer, like the game's dialogue.
+`pc_chat.c` now only owns the input line and hands messages to `mCB_say`; a speaker
+with no actor in our scene gets a corner line while their bubble would be up.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:
@@ -390,6 +407,8 @@ in-game side. The recipe that confirmed the puppet fix:
    the game as B); `--anim-cycle N`, `--anim-speed S` and `--anim-once` on the CLI sweep
    or hold animations. Never press Start (Return) while the driven character is in the
    middle of an action such as a pick-up: it cancels it.
+   `gamekeys.ps1 ptype` followed by `ptap Return` sends a chat line; the bubble is
+   visible in the sender's own window at once, so one game is enough to check it.
    `--item N` puts a tool in the fake resident's hand (1 axe, 10 net, 12 umbrella, 52
    rod, 54 shovel: the item kind + 1). **Pair it with the tool's holding pose** via
    `--anim`: 2 axe, 29 net, 18 umbrella, 67 rod, 83 shovel (`mPlayer_ANIM_*1`). A real

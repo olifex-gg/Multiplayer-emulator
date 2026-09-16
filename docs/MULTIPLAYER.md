@@ -291,9 +291,14 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   minute); the client adds the difference between the host's wall clock and its own to
   the hardware time in `lbRTC_GetHardTime`, so every resident's game agrees on the hour
   and the day. *Chat:* T opens a line at the bottom of the screen, Enter sends, Esc
-  cancels; lines from everyone show top-left for 14 s (`pc/src/pc_chat.c`), and the
-  keyboard is the chat's while the line is open (and until the Enter that closed it is
-  released, since Enter is also Start). All confirmed with two games on one PC; protocol
+  cancels; each message is shown in the game's own thought bubble (the item-name
+  "fukidashi" of `m_watch_my_step.c`: its models, its font, its two dots popping in, its
+  growth with the text, its fade) over the head of the resident who said it -- your own
+  character, or their puppet -- following them; a long message is paged like the game's
+  dialogue (`src/game/m_chat_bubble.c`, one instance per resident, driven from the play
+  loop next to the item bubble). A speaker you cannot see (another room, off screen)
+  gets a line in the top-left corner instead. The keyboard is the chat's while the line is
+  open (and until the Enter that closed it is released, since Enter is also Start). All confirmed with two games on one PC; protocol
   version 4, e2e checks 22-24.
 
 - **Audit (step 4b).** Protocol version 5: the puppet plays each animation layer in the

@@ -9,6 +9,7 @@
 #include "m_debug.h"
 #ifdef TARGET_PC
 #include "ac_puppet.h"
+#include "m_chat_bubble.h"
 #endif
 #include "boot.h"
 #include "version.h"
@@ -610,6 +611,9 @@ static void Game_play_move(GAME* game) {
     mEnv_WindMove();
     game->doing_point = 3;
     watch_my_step_move(play);
+#ifdef TARGET_PC
+    mCB_move(play); /* multiplayer chat: the game's thought bubble over each speaker */
+#endif
     game->doing_point = 4;
     banti_move(play);
     game->doing_point = 5;
@@ -840,6 +844,9 @@ static void Game_play_draw(GAME_PLAY* play) {
         if ((makeBumpTexture(play, graph, graph) == 1) && ((GETREG(HREG, 80) != 10) || (GETREG(HREG, 89) != 0))) {
             PC_DIAG(3, "Game_play_draw: bump done, drawing\n");
             watch_my_step_draw(play);
+#ifdef TARGET_PC
+            mCB_draw(play);
+#endif
             banti_draw(play);
             mSM_submenu_draw(&play->submenu, (GAME*)play);
         }

@@ -27,6 +27,12 @@ extern void Puppet_net_update_local(ACTOR* player_actor, GAME* game);
  * A no-op when the move proc ran this frame or multiplayer is off. */
 extern void Puppet_net_idle(GAME* game);
 
+/* Chat bubbles (m_chat_bubble.c): the actor resident `slot`'s bubble hangs
+ * over -- our own character for our slot, else their puppet -- or NULL when
+ * they are not drawn in our scene. */
+struct game_play_s;
+extern ACTOR* Puppet_chat_actor(struct game_play_s* play, int slot);
+
 /* Villager sync. Asked by a villager every frame: 1 if another resident's game
  * owns this villager right now and has told us where it is (position, facing,
  * whether it is walking, its act and ACNET_NPC_FLAG_* flags); the villager

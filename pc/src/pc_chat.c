@@ -1,4 +1,8 @@
-/* pc_chat.c - in-game text chat overlay. See pc_chat.h. */
+/* pc_chat.c - in-game text chat: the line you type at the bottom of the
+ * screen, and the hand-over of each message to the game's own thought bubble
+ * (m_chat_bubble.c) over the head of the resident who said it. A speaker we
+ * cannot see (another room, off screen) gets a line in the top-left corner
+ * instead so the message is not lost. See pc_chat.h. */
 #include "pc_platform.h" /* first: it sets up SDL without SDL's main() rename */
 #include "pc_chat.h"
 
@@ -10,48 +14,43 @@
 #include "graph.h"
 #include "m_font.h"
 #include "m_rcp.h"
+#include "m_chat_bubble.h"
 #include <dolphin/os.h>
 
 #include <stdio.h>
 #include <string.h>
 
-#define CHAT_LINES     6
-#define CHAT_SHOW_MS   14000 /* how long a line stays on screen */
-#define CHAT_FADE_MS   2000  /* ...of which the last part fades out */
-#define CHAT_KEY       SDLK_t
+#define CHAT_KEY    SDLK_t
+#define CHAT_SCALE  0.75f
+#define CHAT_LINE_H 11.0f
 
 int g_pc_chat_typing;
 
-typedef struct {
-    char   text[ACNET_NAME_LEN + 2 + ACNET_CHAT_LEN + 1];
-    Uint32 ms;
-    int    used;
-} chat_line_t;
-
-static chat_line_t s_lines[CHAT_LINES]; /* oldest first */
+/* What each resident last said, for the corner fallback. */
+static char        s_last_text[ACNET_MAX_PLAYERS][ACNET_CHAT_LEN + 1];
 static char        s_input[ACNET_CHAT_LEN + 1];
 static int         s_input_len;
 static int         s_swallow_open_key; /* the T that opened the line also arrives as text */
 static SDL_Keycode s_closing_key;      /* the key that closed the line, until it comes back up */
 static Uint32      s_closed_ms;
 
-static void chat_add(int slot, const char* text) {
+static const char* chat_name(int slot) {
+    static char label[ACNET_NAME_LEN + 16];
     const char* name = pc_net_peer_name(slot);
-    char label[ACNET_NAME_LEN + 16];
-    int i;
-
     if (name == NULL || name[0] == '\0') {
         snprintf(label, sizeof(label), "Resident %d", slot + 1);
-    } else {
-        snprintf(label, sizeof(label), "%s", name);
+        return label;
     }
-    for (i = 0; i + 1 < CHAT_LINES; i++) {
-        s_lines[i] = s_lines[i + 1];
+    return name;
+}
+
+static void chat_say(int slot, const char* text) {
+    if (slot < 0 || slot >= ACNET_MAX_PLAYERS) {
+        return;
     }
-    snprintf(s_lines[CHAT_LINES - 1].text, sizeof(s_lines[CHAT_LINES - 1].text), "%s: %s", label, text);
-    s_lines[CHAT_LINES - 1].ms = SDL_GetTicks();
-    s_lines[CHAT_LINES - 1].used = 1;
-    OSReport("[chat] %s: %s\n", label, text);
+    snprintf(s_last_text[slot], sizeof(s_last_text[slot]), "%s", text);
+    mCB_say(slot, text); /* the game's bubble over their head */
+    OSReport("[chat] %s: %s\n", chat_name(slot), text);
 }
 
 static void chat_open(void) {
@@ -84,8 +83,21 @@ static void chat_send(void) {
     }
     if (i < s_input_len) {
         pc_net_send_chat(s_input + i);
-        chat_add(pc_net_local_slot(), s_input + i); /* the server does not echo to the sender */
+        chat_say(pc_net_local_slot(), s_input + i); /* the server does not echo to the sender */
     }
+}
+
+int pc_chat_blocks_pad(void) {
+    if (g_pc_chat_typing) {
+        return 1;
+    }
+    if (s_closing_key != SDLK_UNKNOWN) {
+        if (SDL_GetTicks() - s_closed_ms < 1500) {
+            return 1;
+        }
+        s_closing_key = SDLK_UNKNOWN; /* the key-up never came (focus changed?); do not block forever */
+    }
+    return 0;
 }
 
 int pc_chat_handle_event(const SDL_Event* e) {
@@ -152,22 +164,10 @@ int pc_chat_handle_event(const SDL_Event* e) {
     return 0;
 }
 
-int pc_chat_blocks_pad(void) {
-    if (g_pc_chat_typing) {
-        return 1;
-    }
-    if (s_closing_key != SDLK_UNKNOWN) {
-        if (SDL_GetTicks() - s_closed_ms < 1500) {
-            return 1;
-        }
-        s_closing_key = SDLK_UNKNOWN; /* the key-up never came (focus changed?); do not block forever */
-    }
-    return 0;
-}
-
 /* A translucent box in font-space (320 x 240) coordinates, like pc_menu_dim_rect. */
-static void chat_rect(GRAPH* graph, int x0, int y0, int x1, int y1, int alpha) {
+static void chat_rect(GRAPH* graph, f32 x0, f32 y0, f32 x1, f32 y1, int alpha) {
     Gfx* gfx;
+    if (x1 <= x0 || y1 <= y0) return;
     OPEN_DISP(graph);
     gfx = NOW_FONT_DISP;
     gDPPipeSync(gfx++);
@@ -177,7 +177,8 @@ static void chat_rect(GRAPH* graph, int x0, int y0, int x1, int y1, int alpha) {
                     G_AC_NONE | G_ZS_PRIM | G_RM_XLU_SURF | G_RM_XLU_SURF2);
     gDPSetCombineMode(gfx++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
     gDPSetPrimColor(gfx++, 0, 0, 0, 0, 0, alpha);
-    gfx = gfx_gSPTextureRectangle1(gfx, x0 << 2, y0 << 2, x1 << 2, y1 << 2, 0, 0, 0, 0, 0);
+    gfx = gfx_gSPTextureRectangle1(gfx, (int)(x0 * 4.0f), (int)(y0 * 4.0f), (int)(x1 * 4.0f), (int)(y1 * 4.0f), 0, 0,
+                                   0, 0, 0);
     gDPPipeSync(gfx++);
     SET_FONT_DISP(gfx);
     CLOSE_DISP(graph);
@@ -186,50 +187,42 @@ static void chat_rect(GRAPH* graph, int x0, int y0, int x1, int y1, int alpha) {
 void pc_chat_draw(struct game_s* game) {
     GRAPH* graph;
     Uint32 now;
-    int i, shown = 0, widest = 0;
-    const f32 line_h = 12.0f;
-    const f32 scale = 0.75f;
-    const f32 x = 6.0f;
-    int slot;
+    int slot, corner = 0;
+    int in_slot;
     char text[ACNET_CHAT_LEN + 1];
 
     if (!pc_net_enabled() || game == NULL || game->graph == NULL) {
         return;
     }
     /* Drain what arrived this frame. */
-    while (pc_net_poll_chat(&slot, text, sizeof(text))) {
-        chat_add(slot, text);
+    while (pc_net_poll_chat(&in_slot, text, sizeof(text))) {
+        chat_say(in_slot, text);
     }
 
-    now = SDL_GetTicks();
-    for (i = 0; i < CHAT_LINES; i++) {
-        if (s_lines[i].used && now - s_lines[i].ms < CHAT_SHOW_MS) {
-            int w = (int)((f32)pc_text_width(s_lines[i].text) * scale);
-            if (w > widest) widest = w;
-            shown++;
-        }
+    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
+        if (mCB_active(slot) && !mCB_visible(slot)) corner++;
     }
-    if (shown == 0 && !g_pc_chat_typing) {
+    if (corner == 0 && !g_pc_chat_typing) {
         return;
     }
 
+    now = SDL_GetTicks();
     graph = game->graph;
     mFont_SetMatrix(graph, mFont_MODE_FONT);
 
-    if (shown > 0) {
-        f32 y = 6.0f;
-        chat_rect(graph, 2, 2, (int)(x + widest + 6.0f), (int)(6.0f + shown * line_h + 2.0f), 110);
-        for (i = 0; i < CHAT_LINES; i++) {
-            Uint32 age;
-            int a = 255;
-            if (!s_lines[i].used) continue;
-            age = now - s_lines[i].ms;
-            if (age >= CHAT_SHOW_MS) continue;
-            if (age > CHAT_SHOW_MS - CHAT_FADE_MS) {
-                a = (int)(255u * (CHAT_SHOW_MS - age) / CHAT_FADE_MS);
-            }
-            pc_text_draw(game, s_lines[i].text, x, y, 255, 255, 255, a, scale);
-            y += line_h;
+    if (corner) {
+        /* Speakers we cannot see: their line in the corner, while their bubble
+         * would be up. */
+        f32 cy = 6.0f;
+        for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
+            char line[ACNET_NAME_LEN + 2 + ACNET_CHAT_LEN + 1];
+            f32 w;
+            if (!(mCB_active(slot) && !mCB_visible(slot))) continue;
+            snprintf(line, sizeof(line), "%s: %s", chat_name(slot), s_last_text[slot]);
+            w = (f32)pc_text_width(line) * CHAT_SCALE;
+            chat_rect(graph, 2.0f, cy - 2.0f, 10.0f + w, cy + CHAT_LINE_H, 110);
+            pc_text_draw(game, line, 6.0f, cy, 255, 255, 255, 255, CHAT_SCALE);
+            cy += CHAT_LINE_H + 1.0f;
         }
     }
 
@@ -237,8 +230,8 @@ void pc_chat_draw(struct game_s* game) {
         char line[ACNET_CHAT_LEN + 8];
         f32 y = 240.0f - 18.0f;
         snprintf(line, sizeof(line), "> %s%s", s_input, ((now / 400) & 1) ? "_" : " ");
-        chat_rect(graph, 2, (int)(y - 3.0f), 318, (int)(y + line_h + 1.0f), 150);
-        pc_text_draw(game, line, x, y, 255, 240, 170, 255, scale);
+        chat_rect(graph, 2.0f, y - 3.0f, 318.0f, y + CHAT_LINE_H + 2.0f, 150);
+        pc_text_draw(game, line, 6.0f, y, 255, 240, 170, 255, CHAT_SCALE);
         pc_text_draw(game, "Enter: send   Esc: cancel", 200.0f, y, 170, 170, 170, 255, 0.6f);
     }
 

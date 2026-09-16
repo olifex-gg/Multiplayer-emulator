@@ -35,8 +35,12 @@ their own disc image in `rom/`.
    need the host's public IP and UDP port 7777 forwarded to the host's PC).
 2. Everyone else clicks **Join a town**, enters the code and address, and picks a resident
    name. The waiting room shows who lives in the town and who is online.
-3. In the game: **T** opens the chat line, **Enter** sends, **Esc** cancels. Messages show
-   in the top-left corner for a few seconds.
+3. In the game: **T** opens the chat line, **Enter** sends, **Esc** cancels. What you say
+   pops up in the game's own thought bubble over your character's head (the one that
+   names an item when you stand on it), and over your puppet's head in everyone else's
+   game. It grows with the message, follows you, and a long message is shown a page at
+   a time. If the speaker is somewhere you cannot see (another room), the line shows in
+   the top-left corner instead.
 
 What is shared: the town itself (trees, flowers, dropped items, holes, buried things),
 every resident's character and house, the weather and the calendar (the host's clock is

@@ -33,6 +33,7 @@
 #include "ac_weather.h"
 #include "ac_npc.h"
 #include "m_demo.h"
+#include "m_lib.h" /* Game_play_Projection_Trans */
 #include <stddef.h>
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
@@ -1053,6 +1054,19 @@ static void Puppet_stream_local(GAME_PLAY* play, ACTOR* player_actor, int paused
     }
 }
 
+/* Chat bubbles (m_chat_bubble.c): the actor a resident's bubble hangs over,
+ * our own character for our slot, else that resident's puppet, or NULL when
+ * they are not drawn in our scene. */
+ACTOR* Puppet_chat_actor(GAME_PLAY* play, int slot) {
+    if (play == NULL || pc_net_local_slot() < 0 || slot < 0 || slot >= ACNET_MAX_PLAYERS) {
+        return NULL;
+    }
+    if (slot == pc_net_local_slot()) {
+        return GET_PLAYER_ACTOR_ACTOR(play);
+    }
+    return Puppet_find(play, slot);
+}
+
 /* Called at the end of every play frame (play_main). If the player's move
  * proc did not run this frame -- the game is paused -- send our state anyway. */
 void Puppet_net_idle(GAME* game) {
@@ -1214,6 +1228,11 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
 
 void Puppet_net_idle(GAME* game) {
     (void)game;
+}
+
+ACTOR* Puppet_chat_actor(GAME_PLAY* play, int slot) {
+    (void)play; (void)slot;
+    return NULL;
 }
 
 #endif /* TARGET_PC */
