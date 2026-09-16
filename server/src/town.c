@@ -29,6 +29,8 @@ static int acnet_replace(const char* from, const char* to) { return rename(from,
 #define TOWN_TMP       "town.gci.tmp"
 #define RESIDENTS_FILE "residents.txt"
 #define VERSION_FILE   "town.version"
+#define EMPTY_FILE     "empty.bin"   /* ACNET_RESIDENT_BLOB_SIZE: an unused character block + house block */
+#define ROSTER_DIR     "roster"      /* <name>.bin, same layout: a resident who had to give up their seat */
 #define TOWN_BACKUPS   3
 
 static void path_join(char* out, size_t out_size, const char* dir, const char* file) {
@@ -182,6 +184,112 @@ static void town_fix_stored(town_t* t) {
     }
 }
 
+/* ------------------------------------------------------------ houses */
+
+static size_t town_arrangement_abs(int slot) {
+    return ACNET_SAVE_MAIN_ABS + ACNET_HOUSE_ARRANGEMENT_OFFSET + (size_t)slot;
+}
+
+int town_house_of_slot(const town_t* t, int slot) {
+    if (slot < 0 || slot >= ACNET_MAX_PLAYERS) return slot;
+    if (!t->data || town_is_legacy(t)) return slot;
+    return t->data[town_arrangement_abs(slot)] & (ACNET_MAX_PLAYERS - 1);
+}
+
+static int town_house_has_owner(const town_t* t, int house) {
+    const uint8_t* id;
+    if (!t->data || !town_slot_stored(t, house)) return 0;
+    id = t->data + town_home_off(t, house) + ACNET_HOME_OWNER_ID_OFFSET;
+    return !(id[0] == 0xFF && id[1] == 0xFF && id[2] == 0xFF && id[3] == 0xFF);
+}
+
+/* ------------------------------------------------------------ seats */
+
+static int load_empty_template(town_t* t) {
+    char path[TOWN_DIR_MAX + 64];
+    uint8_t* buf;
+    if (t->empty_blocks) return 1;
+    path_join(path, sizeof(path), t->dir, EMPTY_FILE);
+    buf = (uint8_t*)malloc(ACNET_RESIDENT_BLOB_SIZE);
+    if (!buf) return 0;
+    if (read_file(path, buf, ACNET_RESIDENT_BLOB_SIZE) != 0) {
+        free(buf);
+        return 0;
+    }
+    t->empty_blocks = buf;
+    return 1;
+}
+
+/* Remember what an unused character block and an unused house look like in
+ * this town, from a slot nobody has used, so a seat can later be blanked for
+ * a newcomer. Done once; the copy is kept on disk. */
+static void capture_empty_template(town_t* t) {
+    int i;
+    if (t->empty_blocks || !t->data || town_is_legacy(t)) return;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        int h = town_house_of_slot(t, i);
+        if (!town_block_has_character(t, i) && !town_house_has_owner(t, h)) {
+            uint8_t* buf = (uint8_t*)malloc(ACNET_RESIDENT_BLOB_SIZE);
+            if (!buf) return;
+            memcpy(buf, t->data + ACNET_PRIVATE_OFFSET(i), ACNET_PRIVATE_SIZE);
+            memcpy(buf + ACNET_PRIVATE_SIZE, t->data + ACNET_HOME_OFFSET(h), ACNET_HOME_SIZE);
+            t->empty_blocks = buf;
+            write_file_atomic(t->dir, EMPTY_FILE, EMPTY_FILE ".tmp", buf, ACNET_RESIDENT_BLOB_SIZE);
+            fprintf(stderr, "[town %s] kept a copy of an empty character block and house (slot %d, house %d) for seating\n",
+                    t->invite, i, h);
+            return;
+        }
+    }
+}
+
+int town_seats_available(const town_t* t) {
+    return t->data != NULL && !town_is_legacy(t) && t->empty_blocks != NULL;
+}
+
+static void roster_path(const town_t* t, const char* name, char* out, size_t out_size) {
+    snprintf(out, out_size, "%s/%s/%s.bin", t->dir, ROSTER_DIR, name);
+}
+
+/* Keep the resident in `slot`'s character and house so they get them back. */
+static int roster_save(town_t* t, int slot) {
+    char dir[TOWN_DIR_MAX + 64];
+    char file[ACNET_NAME_LEN + 8];
+    uint8_t buf[ACNET_RESIDENT_BLOB_SIZE];
+    int h = town_house_of_slot(t, slot);
+    snprintf(dir, sizeof(dir), "%s/%s", t->dir, ROSTER_DIR);
+    if (mkdir_p(dir) != 0) return 0;
+    memcpy(buf, t->data + ACNET_PRIVATE_OFFSET(slot), ACNET_PRIVATE_SIZE);
+    memcpy(buf + ACNET_PRIVATE_SIZE, t->data + ACNET_HOME_OFFSET(h), ACNET_HOME_SIZE);
+    snprintf(file, sizeof(file), "%s.bin", t->slot_owner[slot]);
+    return write_file_atomic(dir, file, "roster.tmp", buf, sizeof(buf)) == 0;
+}
+
+static int roster_load(const town_t* t, const char* name, uint8_t* buf) {
+    char path[TOWN_DIR_MAX + 64];
+    roster_path(t, name, path, sizeof(path));
+    return read_file(path, buf, ACNET_RESIDENT_BLOB_SIZE) == 0;
+}
+
+/* Every seat is owned: pick the one to free. Never someone who is online;
+ * first choice a resident who never saved (nothing to keep), otherwise the
+ * one seen longest ago (ties: the lowest slot). -1 when nobody can move. */
+static int pick_seat_to_free(const town_t* t, town_online_fn online, void* ctx) {
+    int i, best = -1, best_saved = 0;
+    time_t best_seen = 0;
+    for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
+        int saved = t->slot_uploaded[i] ? 1 : 0;
+        if (online && online(ctx, t->slot_owner[i])) continue;
+        if (best < 0 || saved < best_saved || (saved == best_saved && t->slot_last_seen[i] < best_seen)) {
+            best = i;
+            best_saved = saved;
+            best_seen = t->slot_last_seen[i];
+        }
+    }
+    return best;
+}
+
+/* ------------------------------------------------------------ residents.txt */
+
 static int load_residents(town_t* t) {
     char path[TOWN_DIR_MAX + 64];
     FILE* fp;
@@ -190,12 +298,14 @@ static int load_residents(town_t* t) {
     fp = fopen(path, "r");
     if (!fp) return 0; /* none yet */
     while (fgets(line, sizeof(line), fp)) {
-        int slot, uploaded;
+        int slot, uploaded, n;
+        long seen = 0;
         char name[ACNET_NAME_LEN + 1];
-        if (sscanf(line, "%d %d %16s", &slot, &uploaded, name) == 3 &&
-            slot >= 0 && slot < ACNET_MAX_PLAYERS) {
+        n = sscanf(line, "%d %d %16s %ld", &slot, &uploaded, name, &seen);
+        if (n >= 3 && slot >= 0 && slot < ACNET_MAX_PLAYERS) {
             snprintf(t->slot_owner[slot], sizeof(t->slot_owner[slot]), "%s", name);
             t->slot_uploaded[slot] = uploaded ? 1 : 0;
+            t->slot_last_seen[slot] = n >= 4 ? (time_t)seen : 0;
         }
     }
     fclose(fp);
@@ -208,8 +318,8 @@ static int save_residents(town_t* t) {
     int i;
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
         if (t->slot_owner[i][0]) {
-            used += (size_t)snprintf(buf + used, sizeof(buf) - used, "%d %d %s\n", i,
-                                     t->slot_uploaded[i], t->slot_owner[i]);
+            used += (size_t)snprintf(buf + used, sizeof(buf) - used, "%d %d %s %ld\n", i,
+                                     t->slot_uploaded[i], t->slot_owner[i], (long)t->slot_last_seen[i]);
         }
     }
     return write_file_atomic(t->dir, RESIDENTS_FILE, RESIDENTS_FILE ".tmp", (const uint8_t*)buf, used);
@@ -261,6 +371,7 @@ int town_open(town_t* t, const char* data_root, const char* invite) {
         }
     }
     load_residents(t);
+    if (!load_empty_template(t)) capture_empty_template(t);
     return 0;
 }
 
@@ -274,6 +385,8 @@ int town_exists_on_disk(const char* data_root, const char* invite) {
 void town_close(town_t* t) {
     free(t->data);
     t->data = NULL;
+    free(t->empty_blocks);
+    t->empty_blocks = NULL;
 }
 
 int town_block_has_character(const town_t* t, int i) {
@@ -283,8 +396,45 @@ int town_block_has_character(const town_t* t, int i) {
     return !(id[0] == 0xFF && id[1] == 0xFF && id[2] == 0xFF && id[3] == 0xFF);
 }
 
-int town_assign_slot(town_t* t, const char* name, int want_slot) {
+void town_touch_resident(town_t* t, int slot) {
+    if (slot < 0 || slot >= ACNET_MAX_PLAYERS || !t->slot_owner[slot][0]) return;
+    t->slot_last_seen[slot] = time(NULL);
+    save_residents(t);
+}
+
+/* All eight seats are owned: free one for `name`. See town.h. */
+static int town_free_a_seat(town_t* t, const char* name, town_online_fn online, void* ctx, char* evicted) {
+    uint8_t back[ACNET_RESIDENT_BLOB_SIZE];
+    int i, h, victim_saved, returning;
+    if (!town_seats_available(t)) return -1;
+    i = pick_seat_to_free(t, online, ctx);
+    if (i < 0) return -1;
+    victim_saved = t->slot_uploaded[i];
+    if (victim_saved && !roster_save(t, i)) {
+        fprintf(stderr, "[town %s] could not keep %s's character and house in the roster; nobody moves\n",
+                t->invite, t->slot_owner[i]);
+        return -1;
+    }
+    snprintf(evicted, ACNET_NAME_LEN + 1, "%s", t->slot_owner[i]);
+    h = town_house_of_slot(t, i);
+    returning = roster_load(t, name, back);
+    memcpy(t->data + ACNET_PRIVATE_OFFSET(i), returning ? back : t->empty_blocks, ACNET_PRIVATE_SIZE);
+    memcpy(t->data + ACNET_HOME_OFFSET(h), returning ? back + ACNET_PRIVATE_SIZE : t->empty_blocks + ACNET_PRIVATE_SIZE,
+           ACNET_HOME_SIZE);
+    snprintf(t->slot_owner[i], sizeof(t->slot_owner[i]), "%s", name);
+    t->slot_uploaded[i] = returning ? 1 : 0;
+    t->slot_last_seen[i] = time(NULL);
+    town_flush(t);
+    save_residents(t);
+    fprintf(stderr, "[town %s] %s moved out of seat %d (%s) so %s can move in%s\n", t->invite, evicted, i,
+            victim_saved ? "their character and house are kept in the roster" : "they never saved", name,
+            returning ? "; their own character and house are back from the roster" : "");
+    return i;
+}
+
+int town_assign_slot(town_t* t, const char* name, int want_slot, town_online_fn online, void* ctx, char* evicted) {
     int i;
+    evicted[0] = '\0';
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
         if (strcmp(t->slot_owner[i], name) == 0) return i;
     }
@@ -303,13 +453,14 @@ int town_assign_slot(town_t* t, const char* name, int want_slot) {
             for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
                 if (t->slot_owner[i][0] == '\0') break;
             }
-            if (i == ACNET_MAX_PLAYERS) return -1;
+            if (i == ACNET_MAX_PLAYERS) return town_free_a_seat(t, name, online, ctx, evicted);
         }
     } else {
         return -1;
     }
     snprintf(t->slot_owner[i], sizeof(t->slot_owner[i]), "%s", name);
     t->slot_uploaded[i] = 0;
+    t->slot_last_seen[i] = time(NULL);
     save_residents(t);
     return i;
 }
@@ -352,7 +503,8 @@ int town_flush(town_t* t) {
     return write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, t->data, t->data_len) == 0;
 }
 
-int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob) {
+int town_set_resident_blocks(town_t* t, int slot, int house, const uint8_t* blob) {
+    int j;
     if (slot < 0 || slot >= ACNET_MAX_PLAYERS || !t->data) return 0;
     if (town_is_legacy(t)) {
         /* No place to put them until a game saves the town in the new
@@ -361,12 +513,26 @@ int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob) {
                 t->invite, slot);
         return 0;
     }
+    if (house < 0 || house >= ACNET_MAX_PLAYERS) house = town_house_of_slot(t, slot);
     memcpy(t->data + ACNET_PRIVATE_OFFSET(slot), blob, ACNET_PRIVATE_SIZE);
-    memcpy(t->data + ACNET_HOME_OFFSET(slot), blob + ACNET_PRIVATE_SIZE, ACNET_HOME_SIZE);
+    /* The house half goes where the pusher says their house is -- unless
+     * another resident who has saved lives there, which would be a bug in
+     * the pusher's game; then their house is left alone. */
+    for (j = 0; j < ACNET_MAX_PLAYERS; j++) {
+        if (j != slot && t->slot_owner[j][0] && t->slot_uploaded[j] && town_house_of_slot(t, j) == house) break;
+    }
+    if (j < ACNET_MAX_PLAYERS) {
+        fprintf(stderr, "[town %s] slot %d pushed house %d, which is %s's; keeping only the character\n", t->invite,
+                slot, house, t->slot_owner[j]);
+    } else {
+        memcpy(t->data + ACNET_HOME_OFFSET(house), blob + ACNET_PRIVATE_SIZE, ACNET_HOME_SIZE);
+        t->data[town_arrangement_abs(slot)] = (uint8_t)house;
+    }
     if (!t->slot_uploaded[slot]) {
         t->slot_uploaded[slot] = 1;
         save_residents(t);
     }
+    capture_empty_template(t);
     return town_flush(t);
 }
 
@@ -399,11 +565,17 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob) {
          * yet are taken from the uploader (that is how a new resident is
          * created in a town someone else founded). */
         for (j = 0; j < ACNET_MAX_PLAYERS; j++) {
+            int h;
             if (j == uploader_slot) continue;
             if (t->slot_owner[j][0] == '\0' || !t->slot_uploaded[j]) continue;
             if (!town_slot_stored(t, j)) continue; /* a four-resident file has no such block */
+            /* Their house is the block the stored arrangement names, and
+             * that arrangement entry is theirs too (an uploader whose game
+             * has not heard where a new resident moved in must not undo it). */
+            h = town_house_of_slot(t, j);
             memcpy(next + ACNET_PRIVATE_OFFSET(j), t->data + town_private_off(t, j), ACNET_PRIVATE_SIZE);
-            memcpy(next + ACNET_HOME_OFFSET(j), t->data + town_home_off(t, j), ACNET_HOME_SIZE);
+            memcpy(next + ACNET_HOME_OFFSET(h), t->data + town_home_off(t, h), ACNET_HOME_SIZE);
+            if (!town_is_legacy(t)) next[town_arrangement_abs(j)] = t->data[town_arrangement_abs(j)];
         }
     }
     town_fix_payload(next + ACNET_GCI_HEADER_SIZE);
@@ -423,5 +595,6 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob) {
     t->slot_uploaded[uploader_slot] = 1;
     save_residents(t);
     save_version(t);
+    capture_empty_template(t);
     return t->version;
 }

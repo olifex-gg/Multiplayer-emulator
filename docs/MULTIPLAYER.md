@@ -336,3 +336,38 @@ Dolphin support, the N64 version, e-Reader and GBA link, and any distribution of
 - AC-Netplay: https://github.com/KadeStanford/AC-Netplay
 - ModLoader64: https://github.com/hylian-modding/ModLoader64
 - Dolphin Memory Engine (Python): https://pypi.org/project/dolphin-memory-engine/
+
+## Seats and the roster (any number of residents, eight at a time)
+
+The save has eight character blocks and eight houses, so at most eight residents can
+be *in* the town. The server keeps everyone else on a roster:
+
+- **Seats.** A login by a new name takes a free seat as before. When all eight seats are
+  owned, the server frees the seat of a resident who is **away** (not connected): first
+  choice someone who never saved (there is nothing to keep), otherwise the one seen
+  longest ago (`residents.txt` now carries a last-seen time per seat, touched at login
+  and logout). Nobody who is connected is ever moved. If all eight are in town, the
+  ninth login is refused with "all eight residents are in town right now".
+- **The roster.** The evicted resident's character block and house block go to
+  `towns/<invite>/roster/<name>.bin` (Private_c then mHm_hs_c, as stored). When they log
+  in again they get whatever seat is freed for them then, and those two blocks are
+  copied back into it; their name, bells, pockets, house and furniture are as they
+  left them. Villagers remember people by name and id, not by seat, so the town does not
+  notice the move. (The same is true of a seat itself: rule 7 in CLAUDE.md, a slot is
+  the save block the character lives in, still holds; the block just changes hands.)
+- **Blanking a seat.** A freed seat is filled with the newcomer's own roster blocks if
+  they have any, else with the town's *empty-block template*: a copy of an unused
+  character block and an unused house, taken the first time the server sees a town
+  with one (`towns/<invite>/empty.bin`). A town founded full of characters never gets a
+  template, so its ninth login is simply refused, as before.
+- **Houses are not seats.** A resident's house is the `homes[]` block their
+  `house_arrangement` entry names, and a fifth resident's is whichever free house they
+  picked in the second acre, not block 4. So every place the house half of a resident's
+  data moves -- the push (`ACNET_MSG_RESIDENT_PUSH`), the relay
+  (`ACNET_MSG_RESIDENT_DATA`), the server's splice on upload, the roster -- carries or
+  looks up that house index. The server also protects each saved resident's
+  arrangement byte on upload, so a game that has not yet heard where a newcomer moved
+  in cannot undo it with its own save. Protocol 8.
+- **What a running game sees.** When a seat changes hands the server relays the seat's
+  new blocks to everyone in town, so the old resident's puppet and house become the
+  blank (or returning) ones without a reload.

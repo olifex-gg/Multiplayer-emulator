@@ -338,8 +338,20 @@ Stage 1, done and tested: the save, the server, the tools.
   the question is first asked. The delete flow's special four-name pager is bypassed. Seen
   on the rig: a fifth game (Eve) joining a four-resident town got slot 4 from the server,
   saw "Owen / Alana / Cara / Dan / I'm new", and rode the train in as a new resident.
-- *Still to do*: a fifth resident moving into the second acre end to end (the intro walk
-  and Nook's house pick with only the second acre's houses free), then option C's seats.
+- *A fifth resident, end to end (seen on the rig).* Eve, a fifth game on a four-resident
+  town: slot 4 from the server, "I'm new" on the paged menu, Rover's train, Porter, Nook
+  outside the station, and Nook's walk led her straight to the second house acre (C-1 in
+  the test town) because her arranged house is there. She chose the top-right house
+  (house 5), the door demo ran, "Welcome home, eve!" from the gyroid, first job started.
+  The intro's steps are logged as `[intro] step N (player P, first intro F)`; Porter's
+  states as `[porter] think N`. During the door demo the view was black except a blue
+  quad (the camera centres on the house actor's eye, which is right, so this may be the
+  port's normal look for that demo; unverified against a first-acre intro).
+- *Stage 4, the roster, done (server + protocol 8).* See MULTIPLAYER.md "Seats and the
+  roster". The push and the relay now say which `homes[]` block the house half is
+  (`house` byte = the resident's `house_arrangement` entry). Before this the game pushed
+  `homes[slot]` and the server spliced `homes[slot]`, so Eve's house (block 5, owner set
+  by `mHS_set_use` in intro step 11) never reached the stored town.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

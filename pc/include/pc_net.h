@@ -83,6 +83,9 @@ int pc_net_puppets_enabled(void);
 void pc_net_send_land_cells(const acnet_land_cell_t* cells, int count);
 int  pc_net_take_land_cells(acnet_land_cell_t* out, int max);
 
+/* Which Save_t.homes[] block a pending update for `slot` belongs to, or -1
+ * when nothing is pending. 0xFF (an older server) means "use the arrangement". */
+int pc_net_resident_update_house(int slot);
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len);
 
@@ -130,7 +133,7 @@ long long pc_net_server_clock_skew_ms(void);
  * 5 s. force sends even if unchanged (subject to the rate limit). Returns 1
  * when a push went out. */
 int pc_net_push_own_blocks(const void* private_be, size_t private_len, const void* home_be, size_t home_len,
-                           int force);
+                           int house, int force);
 
 #ifdef __cplusplus
 }

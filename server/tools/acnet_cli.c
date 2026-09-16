@@ -200,7 +200,7 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         acnet_resident_data_t r;
         if (payload_len != sizeof(r)) return 0;
         memcpy(&r, payload, sizeof(r));
-        printf("RESIDENT slot=%u version=%u bytes=%zu\n", r.slot, r.town_version, blob_len);
+        printf("RESIDENT slot=%u house=%u version=%u bytes=%zu\n", r.slot, r.house, r.town_version, blob_len);
         break;
     }
     case ACNET_MSG_PLAYER_STATE: {
@@ -493,20 +493,24 @@ int main(int argc, char** argv) {
         uint8_t* town = read_file(push, &len);
         acnet_resident_push_t q;
         uint8_t blocks[ACNET_RESIDENT_BLOB_SIZE];
+        int house;
         if (!town || len != ACNET_TOWN_SIZE || g_my_slot < 0 || g_my_slot >= ACNET_MAX_PLAYERS) {
             fprintf(stderr, "cannot push from %s (need a %u-byte town and a slot)\n", push, (unsigned)ACNET_TOWN_SIZE);
             free(town);
             exit_code = 1;
             goto done;
         }
+        /* Our house is the homes[] block our arrangement entry names, as the game does it. */
+        house = town[ACNET_SAVE_MAIN_ABS + ACNET_HOUSE_ARRANGEMENT_OFFSET + g_my_slot] & (ACNET_MAX_PLAYERS - 1);
         memcpy(blocks, town + ACNET_PRIVATE_OFFSET(g_my_slot), ACNET_PRIVATE_SIZE);
-        memcpy(blocks + ACNET_PRIVATE_SIZE, town + ACNET_HOME_OFFSET(g_my_slot), ACNET_HOME_SIZE);
+        memcpy(blocks + ACNET_PRIVATE_SIZE, town + ACNET_HOME_OFFSET(house), ACNET_HOME_SIZE);
         free(town);
         memset(&q, 0, sizeof(q));
         q.slot = (uint8_t)g_my_slot;
+        q.house = (uint8_t)house;
         send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_PUSH, &q, sizeof(q), blocks, sizeof(blocks), 1);
         enet_host_flush(host);
-        printf("PUSHED slot=%d\n", g_my_slot);
+        printf("PUSHED slot=%d house=%d\n", g_my_slot, house);
     }
     if (chat) {
         acnet_chat_t m;

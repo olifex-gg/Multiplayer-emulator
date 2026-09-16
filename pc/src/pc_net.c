@@ -93,6 +93,7 @@ static remote_resident_t s_remote[ACNET_MAX_PLAYERS];
  * the game takes them (between its own reads of the save). */
 typedef struct {
     int      pending;
+    int      house;   /* Save_t.homes[] block of the house half (0xFF: use the arrangement) */
     uint32_t version;
     uint8_t  bytes[ACNET_RESIDENT_BLOB_SIZE]; /* Private_c then mHm_hs_c, big-endian */
 } resident_update_t;
@@ -470,9 +471,10 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         if (r.slot < ACNET_MAX_PLAYERS && (int)r.slot != s_slot && blob_len == ACNET_RESIDENT_BLOB_SIZE) {
             memcpy(s_resident_update[r.slot].bytes, blob, ACNET_RESIDENT_BLOB_SIZE);
             s_resident_update[r.slot].version = r.town_version;
+            s_resident_update[r.slot].house = r.house;
             s_resident_update[r.slot].pending = 1;
-            OSReport("[net] resident %u sent their character and house (town v%u); taking them into this town\n",
-                     r.slot, r.town_version);
+            OSReport("[net] resident %u sent their character and house (house %u, town v%u); taking them into this town\n",
+                     r.slot, r.house, r.town_version);
         }
         return ACNET_MSG_RESIDENT_DATA;
     }
@@ -887,6 +889,12 @@ int pc_net_take_land_cells(acnet_land_cell_t* out, int max) {
     return n;
 }
 
+int pc_net_resident_update_house(int slot) {
+    if (!s_active || slot < 0 || slot >= ACNET_MAX_PLAYERS || slot == s_slot) return -1;
+    if (!s_resident_update[slot].pending) return -1;
+    return s_resident_update[slot].house;
+}
+
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len) {
     resident_update_t* u;
@@ -969,7 +977,7 @@ static uint32_t fnv1a(const uint8_t* p, size_t n, uint32_t h) {
 }
 
 int pc_net_push_own_blocks(const void* private_be, size_t private_len, const void* home_be, size_t home_len,
-                           int force) {
+                           int house, int force) {
     uint32_t now, h;
     uint8_t blob[ACNET_RESIDENT_BLOB_SIZE];
     acnet_resident_push_t q;
@@ -982,6 +990,7 @@ int pc_net_push_own_blocks(const void* private_be, size_t private_len, const voi
     memcpy(blob + ACNET_PRIVATE_SIZE, home_be, ACNET_HOME_SIZE);
     memset(&q, 0, sizeof(q));
     q.slot = (uint8_t)s_slot;
+    q.house = (uint8_t)house;
     send_msg(ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_PUSH, &q, sizeof(q), blob, sizeof(blob), 1);
     s_push_last_ms = now;
     s_push_hash = h;

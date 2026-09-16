@@ -16,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 #include "protocol.h"
 
 #define TOWN_DIR_MAX 512
@@ -28,6 +29,10 @@ typedef struct {
     uint32_t version;            /* bumped on every accepted upload, persisted */
     char slot_owner[ACNET_MAX_PLAYERS][ACNET_NAME_LEN + 1]; /* "" = unassigned */
     uint8_t slot_uploaded[ACNET_MAX_PLAYERS];               /* owner uploaded at least once */
+    time_t  slot_last_seen[ACNET_MAX_PLAYERS];              /* last login or logout, 0 = unknown */
+    uint8_t* empty_blocks;   /* what a never-used character block + house block look like in
+                              * this town (ACNET_RESIDENT_BLOB_SIZE, from a slot nobody has
+                              * used); needed to blank a seat. NULL until one has been seen. */
 } town_t;
 
 /* Open (or create the directory for) the town keyed by invite code under
@@ -42,8 +47,33 @@ void town_close(town_t* t);
 
 /* Resolve a resident name to a slot. An existing name gets its slot back.
  * A new name gets want_slot if free (or the lowest free slot when want_slot
- * is ACNET_SLOT_ANY). Returns the slot or -1 when the town is full. */
-int town_assign_slot(town_t* t, const char* name, int want_slot);
+ * is ACNET_SLOT_ANY).
+ *
+ * The roster: when all eight seats are owned and the town can blank one
+ * (town_seats_available), the seat of a resident who is away is freed for
+ * the newcomer -- first choice someone who never saved (nothing to keep),
+ * else the one seen longest ago. The evicted resident's saved character and
+ * house are kept in roster/<name>.bin and come back the next time they log
+ * in, into whatever seat is freed for them then; the seat is filled with the
+ * newcomer's own roster blocks if they have any, else blanked with the
+ * empty-block template. `online(ctx, name)` says whether a name is connected
+ * right now (never evicted). `evicted` (ACNET_NAME_LEN + 1 bytes) receives
+ * the name moved out, or "".
+ * Returns the slot, or -1 when the town is full and nobody can be moved. */
+typedef int (*town_online_fn)(void* ctx, const char* name);
+int town_assign_slot(town_t* t, const char* name, int want_slot, town_online_fn online, void* ctx, char* evicted);
+
+/* 1 when a seat could be freed for a newcomer: an eight-resident town whose
+ * empty-block template has been captured. */
+int town_seats_available(const town_t* t);
+
+/* Which Save_t.homes[] block holds slot's house, read from the stored town's
+ * house_arrangement (a fifth resident's house is the free one they picked,
+ * not block 4). The slot itself for a four-resident file or no town. */
+int town_house_of_slot(const town_t* t, int slot);
+
+/* Note that the resident in `slot` is here now (login) or has just left. */
+void town_touch_resident(town_t* t, int slot);
 
 /* 1 when the stored town has a character in save block i (its PersonalID
  * is not the empty 0xFFFF pair). 0 with no town yet. */
@@ -77,12 +107,15 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob);
 int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item);
 
 /* A resident pushed their own two blocks (Private_c then mHm_hs_c, big-endian,
- * ACNET_RESIDENT_BLOB_SIZE bytes) without saving. Writes them into the stored
- * town, marks the resident as having uploaded (so other residents' uploads
- * can no longer overwrite the blocks) and writes the town to disk. The
- * version is not bumped. Returns 1 if stored, 0 when there is no town yet
- * (the caller may still relay the blocks) or on a bad slot. */
-int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob);
+ * ACNET_RESIDENT_BLOB_SIZE bytes) without saving. `house` is the homes[]
+ * block the house half belongs to (the pusher's arrangement entry; 0xFF =
+ * whatever the stored town says), and the stored arrangement is updated to
+ * match. Writes them into the stored town, marks the resident as having
+ * uploaded (so other residents' uploads can no longer overwrite the blocks)
+ * and writes the town to disk. The version is not bumped. Returns 1 if
+ * stored, 0 when there is no town yet (the caller may still relay the
+ * blocks) or on a bad slot. */
+int town_set_resident_blocks(town_t* t, int slot, int house, const uint8_t* blob);
 
 /* Recompute the checksum, mirror main -> backup and write the town to disk.
  * Used after live land edits; does not bump the version or rotate backups. */

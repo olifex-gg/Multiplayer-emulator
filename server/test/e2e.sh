@@ -2,8 +2,9 @@
 # End-to-end test: starts a server on a random port and drives it with the
 # CLI client. Covers login and slot assignment, founding a town, the
 # per-resident splice on upload, checksum repair, the eight-resident limit,
-# chat relay, world-authority migration, and a town still stored in the
-# four-resident layout.
+# chat relay, world-authority migration, a town still stored in the
+# four-resident layout, and the roster (a ninth resident takes the seat of
+# someone who is away; what they saved comes back when they return).
 set -euo pipefail
 
 SERVER=${1:?server binary}
@@ -38,7 +39,7 @@ wait_for_server() {
 }
 
 mkdir -p "$TMP/data"
-printf '%s\nlegacytown\n' "$INVITE" > "$TMP/data/invites.txt"
+printf '%s\nlegacytown\nseatstown\n' "$INVITE" > "$TMP/data/invites.txt"
 # A town as the four-resident builds stored it: resident 0 has a character,
 # blocks 1-3 are empty. Served as it is, and replaced by the first save.
 mkdir -p "$TMP/data/towns/legacytown"
@@ -169,7 +170,7 @@ sleep 0.7
 out=$(cli --name bob --upload "$TMP/townB.gci")
 grep -q "ACK status=0 version=3" <<<"$out" || fail "bob live upload: $out"
 wait "$LPID" || true
-grep -q "RESIDENT slot=1 version=3 bytes=19184" "$TMP/alice_live.txt" || fail "alice got no live resident data: $(cat "$TMP/alice_live.txt")"
+grep -q "RESIDENT slot=1 house=1 version=3 bytes=19184" "$TMP/alice_live.txt" || fail "alice got no live resident data: $(cat "$TMP/alice_live.txt")"
 
 echo "15. a changed land cell is relayed live and written into the stored town"
 cli --name alice --wait 3 > "$TMP/alice_land.txt" &
@@ -292,7 +293,7 @@ sleep 0.7
 out=$(cli --name bob --push "$TMP/townP.gci" --wait 1)
 grep -q "PUSHED slot=2" <<<"$out" || fail "push: $out"
 wait "$PUPID" || true
-grep -q "RESIDENT slot=2 version=[0-9]* bytes=$((0x2440 + 0x26B0))" "$TMP/alice_push.txt" || fail "alice did not get bob's pushed blocks: $(cat "$TMP/alice_push.txt")"
+grep -q "RESIDENT slot=2 house=2 version=[0-9]* bytes=$((0x2440 + 0x26B0))" "$TMP/alice_push.txt" || fail "alice did not get bob's pushed blocks: $(cat "$TMP/alice_push.txt")"
 sleep 1
 $MK check "$TMP/data/towns/$INVITE/town.gci" > "$TMP/check_push.txt"
 grep -q "^OK .*slot2=0xEE/0xEE" "$TMP/check_push.txt" || fail "pushed blocks not stored: $(cat "$TMP/check_push.txt")"
@@ -329,5 +330,49 @@ grep -q "ACK status=0 version=1" <<<"$out" || fail "zed's upload of the new layo
 [[ $(stat -c %s "$TMP/data/towns/legacytown/town.gci") -eq $((64 + 0xA2000)) ]] || fail "the stored town was not replaced by the eight-resident layout"
 $MK check "$TMP/data/towns/legacytown/town.gci" | grep -q "^OK slot0=0x60/0x70" || fail "upgraded town wrong"
 grep -q "now stored in the eight-resident layout" "$TMP/server.log" || fail "server did not report the upgrade"
+
+echo "26. a ninth resident takes the seat of whoever is away and was seen longest ago; the roster gives it back"
+scli() { "$CLI" --server 127.0.0.1 --port "$PORT" --invite seatstown --quiet "$@"; }
+SD="$TMP/data/towns/seatstown"
+$MK make "$TMP/townS.gci" --fill 0xA0 --residents 1
+out=$(scli --name p1 --upload "$TMP/townS.gci" --reason new)
+grep -q "ACK status=0 version=1" <<<"$out" || fail "p1 founds seatstown: $out"
+[[ -f "$SD/empty.bin" ]] || fail "the server did not keep an empty-block template"
+[[ $(stat -c %s "$SD/empty.bin") -eq $((0x2440 + 0x26B0)) ]] || fail "template size"
+for n in 2 3 4 5 6 7 8; do
+  out=$(scli --name p$n)
+  grep -q "WELCOME client_id=[0-9]* slot=$((n-1)) " <<<"$out" || fail "p$n should get slot $((n-1)): $out"
+done
+# Everyone saves (a push counts), so a newcomer must evict a saved resident:
+# the one seen longest ago, which is p1, the founder.
+for n in 2 3 4 5 6 7 8; do
+  scli --name p$n --download "$TMP/townS_$n.gci" > /dev/null
+  $MK set "$TMP/townS_$n.gci" $((n-1)) $((0xC0 + n))
+  out=$(scli --name p$n --push "$TMP/townS_$n.gci" --wait 1)
+  grep -q "PUSHED slot=$((n-1)) house=$((n-1))" <<<"$out" || fail "p$n push: $out"
+done
+sleep 1.2
+out=$(scli --name p9)
+grep -q "WELCOME client_id=[0-9]* slot=0 " <<<"$out" || fail "p9 should take p1's seat: $out"
+grep -q "p1 moved out of seat 0 (their character and house are kept in the roster) so p9 can move in" "$TMP/server.log" || fail "server did not report the move: $(tail -n 5 "$TMP/server.log")"
+[[ -f "$SD/roster/p1.bin" ]] || fail "p1's character and house were not kept"
+[[ $(stat -c %s "$SD/roster/p1.bin") -eq $((0x2440 + 0x26B0)) ]] || fail "roster file size"
+$MK check "$SD/town.gci" > "$TMP/check_seat.txt"
+grep -q "slot0=0xFF/0xFF" "$TMP/check_seat.txt" || fail "seat 0 was not blanked for p9: $(cat "$TMP/check_seat.txt")"
+grep -q "slot1=0xC2/0xC2" "$TMP/check_seat.txt" || fail "p2's pushed blocks must stay: $(cat "$TMP/check_seat.txt")"
+grep -q "^0 0 p9 [0-9]" "$SD/residents.txt" || fail "residents.txt after p9: $(cat "$SD/residents.txt")"
+# p1 comes back: p9 never saved, so p9 (nothing to lose) gives up seat 0
+# before any saved resident would, and p1's own character and house come
+# back from the roster into it.
+sleep 1.2
+out=$(scli --name p1)
+grep -q "WELCOME client_id=[0-9]* slot=0 " <<<"$out" || fail "p1 should be seated where p9 was: $out"
+grep -q "p9 moved out of seat 0 (they never saved) so p1 can move in; their own character and house are back from the roster" "$TMP/server.log" || fail "server did not report p1's return: $(tail -n 5 "$TMP/server.log")"
+$MK check "$SD/town.gci" | grep -q "slot0=0xA0/0xB0" || fail "p1's saved character and house did not come back: $($MK check "$SD/town.gci")"
+! [[ -f "$SD/roster/p9.bin" ]] || fail "p9 never saved, so nothing should be kept for them"
+grep -q "^0 1 p1 [0-9]" "$SD/residents.txt" || fail "residents.txt after p1's return: $(cat "$SD/residents.txt")"
+# The main town is full of characters and has no empty block to copy, so its
+# ninth login is still refused (step 10) rather than evicting anyone.
+! [[ -f "$TMP/data/towns/$INVITE/empty.bin" ]] || fail "the full town must not have a template"
 
 echo "ALL PASSED"

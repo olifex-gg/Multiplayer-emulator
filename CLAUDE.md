@@ -83,8 +83,8 @@ and catches most mistakes, but only the Windows build is what the user runs.
 
 - `ctest --test-dir server/build` — the server end-to-end suite (`server/test/e2e.sh`).
   It covers login, slot assignment, founding a town, the per-resident splice, checksum
-  repair, the four-resident limit, chat, authority migration, restart persistence, the
-  lobby status query, live resident sync and the land relay. **Add a case for every new
+  repair, the eight-resident limit and the roster, chat, authority migration, restart
+  persistence, the lobby status query, live resident sync and the land relay. **Add a case for every new
   protocol message.** `server/tools/acnet_cli.c` is the scriptable client it drives.
   On the user's PC, Windows Firewall silently *blocks* a server exe it has not seen before
   (it auto-created Block rules for `server/build/acnet_server.exe`), so `ctest` times out
@@ -189,3 +189,8 @@ These each cost a debugging cycle. Do not regress them.
     as `.before-eight`, and the server serves such a town as it is until the first save
     replaces it. Anything that changes `Save_t` again needs the same treatment: record the
     layout before and after, convert, assert.
+17. **A resident's house is their arrangement entry, not their slot.** `homes[i]` belongs
+    to whoever's `house_arrangement` entry says `i`; a fifth resident picks a free house in
+    the second acre, so theirs is not `homes[4]`. Every path that moves the house half of a
+    resident's data (push, relay, the server's splice, the roster) carries or looks up that
+    index (`ACNET_HOUSE_ARRANGEMENT_OFFSET`). Pushing `homes[slot]` lost Eve's house.

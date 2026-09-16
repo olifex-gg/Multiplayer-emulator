@@ -306,6 +306,21 @@ static void room_elect_authority(int room) {
 
 /* ------------------------------------------------------------ handlers */
 
+/* For the roster: is a resident by this name connected to this room right now? */
+static int room_name_online(void* ctx, const char* name) {
+    int room = *(const int*)ctx;
+    int i;
+    for (i = 0; i < ACNET_MAX_CLIENTS; i++) {
+        if (g_clients[i].in_use && g_clients[i].logged_in && g_clients[i].room == room &&
+            strcmp(g_clients[i].name, name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void room_send_resident_blocks(int room, client_t* exclude, int slot, uint32_t version);
+
 static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
     acnet_hello_t h;
     char invite[ACNET_INVITE_LEN + 1];
@@ -355,14 +370,28 @@ static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
             return;
         }
     }
-    slot = town_assign_slot(&g_rooms[room].town, name, h.want_slot == ACNET_SLOT_ANY ? ACNET_SLOT_ANY : (int)h.want_slot);
-    if (slot < 0) {
-        if (h.want_slot != ACNET_SLOT_ANY) {
-            send_reject(c->peer, ACNET_REJECT_SLOT_TAKEN, "that resident slot belongs to someone else");
-        } else {
-            send_reject(c->peer, ACNET_REJECT_TOWN_FULL, "this town already has eight residents");
+    {
+        char evicted[ACNET_NAME_LEN + 1];
+        slot = town_assign_slot(&g_rooms[room].town, name, h.want_slot == ACNET_SLOT_ANY ? ACNET_SLOT_ANY : (int)h.want_slot,
+                                room_name_online, &room, evicted);
+        if (slot < 0) {
+            if (h.want_slot != ACNET_SLOT_ANY) {
+                send_reject(c->peer, ACNET_REJECT_SLOT_TAKEN, "that resident slot belongs to someone else");
+            } else if (town_seats_available(&g_rooms[room].town)) {
+                send_reject(c->peer, ACNET_REJECT_TOWN_FULL,
+                            "all eight residents are in town right now; try again when one of them leaves");
+            } else {
+                send_reject(c->peer, ACNET_REJECT_TOWN_FULL, "this town already has eight residents");
+            }
+            return;
         }
-        return;
+        if (evicted[0]) {
+            logf_("[%s] %s is away, so their seat (resident %d) goes to %s", g_rooms[room].town.invite, evicted, slot,
+                  name);
+            /* Games in town now: that seat holds a blank (or the newcomer's
+             * own returning) character and house. */
+            room_send_resident_blocks(room, NULL, slot, g_rooms[room].town.version);
+        }
     }
 
     c->logged_in = 1;
@@ -370,6 +399,7 @@ static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
     c->slot = slot;
     snprintf(c->name, sizeof(c->name), "%s", name);
     c->login_seq = ++g_login_seq;
+    town_touch_resident(&g_rooms[room].town, slot);
 
     memset(&w, 0, sizeof(w));
     w.client_id = (uint8_t)c->id;
@@ -449,21 +479,10 @@ static void handle_town_upload(client_t* c, const uint8_t* payload, size_t paylo
     ack.by_slot = (uint8_t)c->slot;
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_TOWN_ACK, &ack, sizeof(ack), NULL, 0, 1);
     room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_TOWN_VERSION, &ack, sizeof(ack), 1);
-    {
-        /* Live resident sync: hand the uploader's own two blocks, as now
-         * stored, to everyone else so their running games take the new
-         * character and house without a reload. */
-        acnet_resident_data_t rd;
-        uint8_t rb[ACNET_RESIDENT_BLOB_SIZE];
-        const uint8_t* town = g_rooms[c->room].town.data;
-        memset(&rd, 0, sizeof(rd));
-        rd.slot = (uint8_t)c->slot;
-        rd.town_version = v;
-        memcpy(rb, town + ACNET_PRIVATE_OFFSET(c->slot), ACNET_PRIVATE_SIZE);
-        memcpy(rb + ACNET_PRIVATE_SIZE, town + ACNET_HOME_OFFSET(c->slot), ACNET_HOME_SIZE);
-        room_broadcast_blob(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_DATA, &rd, sizeof(rd), rb,
-                            sizeof(rb), 1);
-    }
+    /* Live resident sync: hand the uploader's own two blocks, as now stored,
+     * to everyone else so their running games take the new character and
+     * house without a reload. */
+    room_send_resident_blocks(c->room, c, c->slot, v);
     logf_("[%s] town v%u saved by %s (reason %u)", g_rooms[c->room].town.invite, v, c->name, u.reason);
 }
 
@@ -629,6 +648,24 @@ static void handle_weather(client_t* c, const uint8_t* payload, size_t len) {
 /* A resident's own two blocks, pushed without a save: store them (only
  * their blocks can change), protect them from now on, and hand them to the
  * others as RESIDENT_DATA so a brand-new character is seen at once. */
+/* Slot's own two blocks, as stored (the house half from the homes[] block
+ * the stored arrangement names), to everyone in the room but `exclude`. */
+static void room_send_resident_blocks(int room, client_t* exclude, int slot, uint32_t version) {
+    acnet_resident_data_t rd;
+    uint8_t rb[ACNET_RESIDENT_BLOB_SIZE];
+    const town_t* t = &g_rooms[room].town;
+    int house;
+    if (!t->data || t->data_len != ACNET_TOWN_SIZE || slot < 0 || slot >= ACNET_MAX_PLAYERS) return;
+    house = town_house_of_slot(t, slot);
+    memset(&rd, 0, sizeof(rd));
+    rd.slot = (uint8_t)slot;
+    rd.house = (uint8_t)house;
+    rd.town_version = version;
+    memcpy(rb, t->data + ACNET_PRIVATE_OFFSET(slot), ACNET_PRIVATE_SIZE);
+    memcpy(rb + ACNET_PRIVATE_SIZE, t->data + ACNET_HOME_OFFSET(house), ACNET_HOME_SIZE);
+    room_broadcast_blob(room, exclude, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_DATA, &rd, sizeof(rd), rb, sizeof(rb), 1);
+}
+
 static void handle_resident_push(client_t* c, const uint8_t* payload, size_t payload_len, const uint8_t* blob,
                                  size_t blob_len) {
     acnet_resident_push_t p;
@@ -643,9 +680,10 @@ static void handle_resident_push(client_t* c, const uint8_t* payload, size_t pay
               c->slot);
         return;
     }
-    stored = town_set_resident_blocks(&room->town, c->slot, blob);
+    stored = town_set_resident_blocks(&room->town, c->slot, (int)p.house, blob);
     memset(&rd, 0, sizeof(rd));
     rd.slot = (uint8_t)c->slot;
+    rd.house = p.house;
     rd.town_version = room->town.version;
     room_broadcast_blob(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_DATA, &rd, sizeof(rd), blob, blob_len, 1);
     if (g_verbose) {
@@ -796,6 +834,7 @@ static void client_release(client_t* c) {
         left.slot = (uint8_t)c->slot;
         memcpy(left.name, c->name, ACNET_NAME_LEN);
         c->logged_in = 0;
+        town_touch_resident(&g_rooms[room].town, c->slot);
         room_broadcast(room, c, ACNET_CH_CONTROL, ACNET_MSG_PEER_LEFT, &left, sizeof(left), 1);
         logf_("[%s] %s left, %d online", g_rooms[room].town.invite, c->name, room_logged_in_count(room));
         room_elect_authority(room);

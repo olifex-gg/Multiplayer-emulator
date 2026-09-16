@@ -5,7 +5,10 @@ The layout constants are read from net/protocol.h so the test cannot drift
 from the code. A synthetic town has recognisable fill bytes in each resident's
 private and house blocks, a valid save checksum, and a mirrored backup copy.
 
-  mktown.py make OUT [--fill 0xA0]   private[i] = fill+i, home[i] = fill+0x10+i
+  mktown.py make OUT [--fill 0xA0] [--residents N]
+                                     private[i] = fill+i, home[i] = fill+0x10+i; with
+                                     --residents only the first N slots are filled, the
+                                     rest are empty (0xFF, no character, no owner)
   mktown.py set FILE SLOT BYTE       refill one resident's blocks, refix checksum
   mktown.py check FILE               validate; prints slot fill bytes; exit 1 if bad
   mktown.py slot FILE SLOT           print the private fill byte of SLOT (or 'mixed')
@@ -61,14 +64,21 @@ def fix(blob):
     blob[C["BACK_ABS"]:C["BACK_ABS"] + C["ACNET_SAVE_ALIGNED_SIZE"]] = blob[m:m + C["ACNET_SAVE_ALIGNED_SIZE"]]
 
 
-def make(out, fill):
+def make(out, fill, residents=None):
     blob = bytearray(C["TOWN_SIZE"])
     blob[0:6] = b"GAFE01"
     blob[8:8 + 19] = b"DobutsunomoriP_MURA"
     # land_info: give it a non-zero id
     land = C["MAIN_ABS"] + C["ACNET_LAND_INFO_OFFSET"]
     blob[land:land + 8] = b"Testtown"
+    # house_arrangement: resident i lives in house i, as a fresh town has it
+    arr = C["MAIN_ABS"] + C["ACNET_HOUSE_ARRANGEMENT_OFFSET"]
     for i in range(C["ACNET_MAX_PLAYERS"]):
+        blob[arr + i] = i
+        if residents is not None and i >= residents:
+            for a, b in (private_range(i), home_range(i)):
+                blob[a:b] = b"\xff" * (b - a)
+            continue
         a, b = private_range(i)
         blob[a:b] = bytes([(fill + i) & 0xFF]) * (b - a)
         a, b = home_range(i)
@@ -119,9 +129,12 @@ def main(argv):
     cmd, path = argv[1], argv[2]
     if cmd == "make":
         fill = 0xA0
+        residents = None
         if "--fill" in argv:
             fill = int(argv[argv.index("--fill") + 1], 0)
-        make(path, fill)
+        if "--residents" in argv:
+            residents = int(argv[argv.index("--residents") + 1], 0)
+        make(path, fill, residents)
         return 0
     if cmd == "set":
         slot, byte = int(argv[3]), int(argv[4], 0)

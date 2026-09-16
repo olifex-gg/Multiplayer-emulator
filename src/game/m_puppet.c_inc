@@ -51,6 +51,7 @@ typedef char puppet_runtime_end_check[(ACNET_LAND_RUNTIME_END == RSV_SHOP_PAPER)
 typedef char puppet_grow_time_check[(sizeof(lbRTC_time_c) <= ACNET_GROW_TIME_SIZE) ? 1 : -1];
 /* The server tells an empty save block by its PersonalID; keep the offset honest. */
 typedef char puppet_id_offset_check[(offsetof(Private_c, player_ID.player_id) == ACNET_PRIVATE_ID_OFFSET) ? 1 : -1];
+typedef char puppet_home_owner_check[(offsetof(mHm_hs_c, ownerID.player_id) == ACNET_HOME_OWNER_ID_OFFSET) ? 1 : -1];
 /* Every save-layout constant the server relies on, against the real structs
  * (multiplayer fork, eight residents: all of them moved). */
 typedef char puppet_players_check[(ACNET_MAX_PLAYERS == PLAYER_NUM) ? 1 : -1];
@@ -1050,12 +1051,17 @@ static void Puppet_stream_local(GAME_PLAY* play, ACTOR* player_actor, int paused
     if (local_slot < ACNET_MAX_PLAYERS && (++push_tick % 60) == 30 && Puppet_slot_has_resident(local_slot)) {
         static Private_c push_private ATTRIBUTE_ALIGN(32);
         static mHm_hs_c push_home ATTRIBUTE_ALIGN(32);
+        /* Our house is whichever homes[] block our arrangement entry names
+         * (a fifth resident's is the free one they picked in the second
+         * acre), not homes[our slot]; the push says which. */
+        int my_house = mHS_get_arrange_idx(local_slot);
         memcpy(&push_private, Save_GetPointer(private_data[local_slot]), sizeof(push_private));
-        memcpy(&push_home, Save_GetPointer(homes[local_slot]), sizeof(push_home));
+        memcpy(&push_home, Save_GetPointer(homes[my_house]), sizeof(push_home));
         pc_save_bswap_private(&push_private, PC_BSWAP_TO_BE);
         pc_save_bswap_home(&push_home, PC_BSWAP_TO_BE);
-        if (pc_net_push_own_blocks(&push_private, sizeof(push_private), &push_home, sizeof(push_home), 0)) {
-            OSReport("[puppet] sent my character and house to the other residents (they changed)\n");
+        if (pc_net_push_own_blocks(&push_private, sizeof(push_private), &push_home, sizeof(push_home), my_house, 0)) {
+            OSReport("[puppet] sent my character and house (house %d) to the other residents (they changed)\n",
+                     my_house);
         }
     }
 
@@ -1123,15 +1129,39 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
      *     own reads rather than from the network pump. Their puppet's look
      *     is rebuilt from the new block on its next update. */
     for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
+        int house;
         if (slot == local_slot) {
             continue;
         }
+        house = pc_net_resident_update_house(slot);
+        if (house < 0) {
+            continue;
+        }
+        /* The house half belongs in the homes[] block the sender named
+         * (their arrangement entry). An older server sends 0xFF: fall back
+         * to what our own arrangement table says. */
+        if (house >= mHS_HOUSE_NUM) {
+            house = mHS_get_arrange_idx(slot);
+        }
         if (pc_net_take_resident_update(slot, Save_GetPointer(private_data[slot]), sizeof(Private_c),
-                                        Save_GetPointer(homes[slot]), sizeof(mHm_hs_c))) {
+                                        Save_GetPointer(homes[house]), sizeof(mHm_hs_c))) {
             pc_save_bswap_private(Save_GetPointer(private_data[slot]), PC_BSWAP_FROM_BE);
-            pc_save_bswap_home(Save_GetPointer(homes[slot]), PC_BSWAP_FROM_BE);
+            pc_save_bswap_home(Save_GetPointer(homes[house]), PC_BSWAP_FROM_BE);
+            if (mHS_get_arrange_idx(slot) != house) {
+                /* They live in a different house than our arrangement table
+                 * says (they just picked it, or were seated there): follow
+                 * them, swapping like mHS_set_use does so no two residents
+                 * point at one house. */
+                int holder = mHS_get_pl_no(house);
+                u8 old_house = Save_Get(house_arrangement[slot]);
+                if (holder < PLAYER_NUM && holder != slot) {
+                    Save_Set(house_arrangement[holder], old_house);
+                }
+                Save_Set(house_arrangement[slot], (u8)house);
+            }
             s_look[slot].valid = 0;
-            OSReport("[puppet] resident %d's new character and house are now in this town\n", slot);
+            OSReport("[puppet] resident %d's new character and house (house %d) are now in this town\n", slot,
+                     house);
         }
     }
 

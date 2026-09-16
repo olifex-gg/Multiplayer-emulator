@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 7 /* 7: eight residents; the town blob grew */
+#define ACNET_PROTOCOL_VERSION 8 /* 8: resident blocks name their house; the server seats a roster */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 8     /* PLAYER_NUM: resident slots in one town */
@@ -53,6 +53,8 @@
 #define ACNET_HOME_ARRAY_OFFSET    0x12DE8       /* Save_t.homes[PLAYER_NUM] */
 #define ACNET_HOME_SIZE            0x26B0        /* sizeof(mHm_hs_c) */
 #define ACNET_HOUSE_ARRANGEMENT_OFFSET 0x3392E   /* Save_t.house_arrangement[PLAYER_NUM]: house index per player */
+#define ACNET_HOME_OWNER_ID_OFFSET 0x10          /* mHm_hs_c.ownerID.player_id, land_id (u16 BE each): 0xFFFF
+                                                  * pairs = nobody has moved in */
 
 /* The four-resident layout (protocol versions up to 6). A server still
  * holding such a town serves it as it is; the game converts it on load and
@@ -328,7 +330,10 @@ typedef struct ACNET_PACKED {
 #define ACNET_RESIDENT_BLOB_SIZE (ACNET_PRIVATE_SIZE + ACNET_HOME_SIZE)
 typedef struct ACNET_PACKED {
     uint8_t  slot;
-    uint8_t  reserved[3];
+    uint8_t  house;       /* which Save_t.homes[] block the house half is: the resident's
+                           * house_arrangement entry, which is NOT their slot once a fifth
+                           * resident picks a free house. 0xFF = unknown, use the arrangement. */
+    uint8_t  reserved[2];
     uint32_t town_version;
 } acnet_resident_data_t;
 
@@ -341,7 +346,8 @@ typedef struct ACNET_PACKED {
  * relays them as RESIDENT_DATA. Rate limited by the client. */
 typedef struct ACNET_PACKED {
     uint8_t  slot;        /* must be the sender's own slot */
-    uint8_t  reserved[3];
+    uint8_t  house;       /* homes[] block of the house half (the sender's arrangement entry) */
+    uint8_t  reserved[2];
 } acnet_resident_push_t;
 
 /* Land relay (step 3). A client sends the field-item cells that changed in
