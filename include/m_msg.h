@@ -272,6 +272,21 @@ extern void mMsg_debug_draw(gfxprint_t* gfxprint);
 extern void mMsg_Main(GAME* game);
 extern void mMsg_Draw(GAME* game);
 extern mMsg_Window_c* mMsg_Get_base_window_p();
+
+#ifdef TARGET_PC
+/* Multiplayer chat in this window (src/game/m_chat_bubble.c). A message with
+ * this number takes its text from mMsg_chat_text instead of the message ROM;
+ * with no client actor the name tag shows mMsg_chat_name; the window body is
+ * drawn mMsg_chat_body_scale_y as tall (fewer lines, shorter window) and the
+ * tag moves down by mMsg_chat_name_shift pixels to stay on its top edge. */
+#define mMsg_CHAT_MSG_NO 0x7FFF
+extern u8  mMsg_chat_text[mMsg_MSG_BUF_SIZE];
+extern int mMsg_chat_text_len;
+extern u8  mMsg_chat_name[16];
+extern int mMsg_chat_name_len;
+extern f32 mMsg_chat_body_scale_y;
+extern f32 mMsg_chat_name_shift;
+#endif
 extern int mMsg_Check_request_priority(mMsg_Window_c* msg_p, int request_priority);
 extern int mMsg_Check_main_index(mMsg_Window_c* msg_p, int main_index);
 extern int mMsg_Check_main_wait(mMsg_Window_c* msg_p);

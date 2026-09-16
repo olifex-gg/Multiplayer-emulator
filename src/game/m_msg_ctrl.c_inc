@@ -37,6 +37,20 @@ extern int mMsg_Check_main_hide(mMsg_Window_c* msg_p) {
 }
 
 static void mMsg_Set_client_actor_p(mMsg_Window_c* msg_p, ACTOR* client_actor_p, int show_name) {
+#ifdef TARGET_PC
+  if (client_actor_p == NULL && mMsg_chat_name_len > 0) {
+    /* Multiplayer chat: a resident's name on the tag, no villager behind it. */
+    f32 width = mFont_GetStringWidth(mMsg_chat_name, mMsg_chat_name_len, TRUE);
+    f32 ofs_x = ((9.0f * (f32)ANIMAL_NAME_LEN) - width) * 0.5f;
+
+    msg_p->client_actor_p = NULL;
+    msg_p->show_actor_name = show_name;
+    msg_p->nameplate_x = 61.0f + ofs_x;
+    msg_p->nameplate_y = 64.0f; /* the tag's matrix already carries the shift */
+    msg_p->client_name_len = mMsg_chat_name_len;
+    return;
+  }
+#endif
   if (client_actor_p != NULL) {
     u8 name[ANIMAL_NAME_LEN];
     f32 width;

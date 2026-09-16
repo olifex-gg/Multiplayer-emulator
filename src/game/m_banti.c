@@ -7,6 +7,9 @@
 #include "sys_matrix.h"
 #include "m_font.h"
 #include "m_common_data.h"
+#ifdef TARGET_PC
+#include "m_msg.h"
+#endif
 
 static Banti_c banti;
 
@@ -117,6 +120,14 @@ static void banti_chk_disp_left(GAME_PLAY* play) {
 }
 
 static f32 banti_calc_disp_alpha_rate(GAME_PLAY* play) {
+#ifdef TARGET_PC
+    /* Multiplayer chat opens the speech window without a demo; the clock
+     * should get out of its way as it does for a villager's words. */
+    if (!mMsg_Check_main_hide(mMsg_Get_base_window_p())) {
+        add_calc(&banti.alpha, 0.0f, 1.0f - sqrtf(0.8), 0.1f, 0.005f);
+        return banti.alpha;
+    }
+#endif
     if (mDemo_CheckDemo() || mEv_IsTitleDemo() || banti.disabled) {
         banti.addressable_type = mPlayer_ADDRESSABLE_FALSE_MOVEMENT;
         add_calc(&banti.alpha, 0.0f, 1.0f - sqrtf(0.8), 0.1f,

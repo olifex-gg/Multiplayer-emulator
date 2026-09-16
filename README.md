@@ -36,11 +36,10 @@ their own disc image in `rom/`.
 2. Everyone else clicks **Join a town**, enters the code and address, and picks a resident
    name. The waiting room shows who lives in the town and who is online.
 3. In the game: **T** opens the chat line, **Enter** sends, **Esc** cancels. What you say
-   pops up in the game's own thought bubble over your character's head (the one that
-   names an item when you stand on it), and over your puppet's head in everyone else's
-   game. It grows with the message, follows you, and a long message is shown a page at
-   a time. If the speaker is somewhere you cannot see (another room), the line shows in
-   the top-left corner instead.
+   appears in the same speech window the villagers talk in, with your name on the tag,
+   typed out letter by letter, in your game and in everyone else's. The window is only as
+   tall as the message (up to four lines) and closes by itself; nobody is frozen while it
+   is up, and a villager who talks to you always gets the window first.
 
 What is shared: the town itself (trees, flowers, dropped items, holes, buried things),
 every resident's character and house, the weather and the calendar (the host's clock is

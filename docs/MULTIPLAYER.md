@@ -291,13 +291,14 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   minute); the client adds the difference between the host's wall clock and its own to
   the hardware time in `lbRTC_GetHardTime`, so every resident's game agrees on the hour
   and the day. *Chat:* T opens a line at the bottom of the screen, Enter sends, Esc
-  cancels; each message is shown in the game's own thought bubble (the item-name
-  "fukidashi" of `m_watch_my_step.c`: its models, its font, its two dots popping in, its
-  growth with the text, its fade) over the head of the resident who said it -- your own
-  character, or their puppet -- following them; a long message is paged like the game's
-  dialogue (`src/game/m_chat_bubble.c`, one instance per resident, driven from the play
-  loop next to the item bubble). A speaker you cannot see (another room, off screen)
-  gets a line in the top-left corner instead. The keyboard is the chat's while the line is
+  cancels; each message is shown in the villagers' own speech window (`m_msg.c`: the
+  name tag with the sender's name, the letter-by-letter text with its voice, the pop-in
+  and pop-out), the window drawn only as tall as the text (one to four lines) and closing
+  by itself after a time proportional to the length. It is opened directly, not through
+  a conversation, so the reader is not frozen; a villager's conversation always takes the
+  window and chat waits for it (`src/game/m_chat_bubble.c`, with three small hooks in
+  `m_msg`: raw text for message number `mMsg_CHAT_MSG_NO`, a given name on the tag, the
+  shorter body). The keyboard is the chat's while the line is
   open (and until the Enter that closed it is released, since Enter is also Start). All confirmed with two games on one PC; protocol
   version 4, e2e checks 22-24.
 

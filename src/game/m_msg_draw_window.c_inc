@@ -44,6 +44,14 @@ static void mMsg_DrawNameWindow(mMsg_Window_c* msg_p, GAME* game, int mode) {
 static void mMsg_DrawWindowClientName(mMsg_Window_c* msg_p, GAME* game, int mode) {
   u8 name[ANIMAL_NAME_LEN];
 
+#ifdef TARGET_PC
+  if (msg_p->client_actor_p == NULL && mMsg_chat_name_len > 0) {
+    int i;
+    for (i = 0; i < ANIMAL_NAME_LEN; i++) {
+      name[i] = i < mMsg_chat_name_len ? mMsg_chat_name[i] : CHAR_SPACE;
+    }
+  } else
+#endif
   mNpc_GetNpcWorldName(name, msg_p->client_actor_p);
   mFont_SetLineStrings_AndSpace(
     game,
@@ -72,16 +80,45 @@ static void mMsg_DrawWindowTurnButton(mMsg_Window_c* msg_p, GAME* game, int mode
   }
 }
 
+#ifdef TARGET_PC
+/* Multiplayer chat: the body drawn shorter for fewer lines (a y scale about
+ * the window's centre), and the name tag moved down onto the new top edge.
+ * The window model is in 1/16 px units; a shift of s px is 16 s units. */
+static void mMsg_ChatBodyMatrix(GRAPH* graph, int mode, f32 scale_y, f32 shift_px) {
+  Matrix_push();
+  Matrix_scale(1.0f, scale_y, 1.0f, MTX_MULT);
+  Matrix_translate(0.0f, -shift_px * 16.0f / scale_y, 0.0f, MTX_MULT);
+  OPEN_DISP(graph);
+  if (mode == mFont_MODE_FONT) {
+    gSPMatrix(NOW_FONT_DISP++, _Matrix_to_Mtx_new(graph), G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
+  }
+  else {
+    gSPMatrix(NOW_POLY_OPA_DISP++, _Matrix_to_Mtx_new(graph), G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
+  }
+  CLOSE_DISP(graph);
+  Matrix_pull();
+}
+#endif
+
 static void mMsg_DrawWindowBody(mMsg_Window_c* msg_p, GAME* game, int mode) {
   GRAPH* graph = game->graph;
   rgba_t* window_background_color = &msg_p->window_background_color;
+#ifdef TARGET_PC
+  int chat_short = mMsg_chat_body_scale_y != 1.0f;
+#endif
 
   OPEN_DISP(graph);
 
   if (mode == mFont_MODE_FONT) {
     gSPDisplayList(NOW_FONT_DISP++, mMsg_init_disp);
     gDPSetPrimColor(NOW_FONT_DISP++, 0, 255, window_background_color->r, window_background_color->g, window_background_color->b, window_background_color->a);
+#ifdef TARGET_PC
+    if (chat_short) mMsg_ChatBodyMatrix(graph, mode, mMsg_chat_body_scale_y, 0.0f);
+#endif
     gSPDisplayList(NOW_FONT_DISP++, con_kaiwa2_modelT);
+#ifdef TARGET_PC
+    if (chat_short) mMsg_ChatBodyMatrix(graph, mode, 1.0f, mMsg_chat_name_shift);
+#endif
 
     if (msg_p->show_actor_name) {
       mMsg_DrawNameWindow(msg_p, game, mode);
@@ -93,7 +130,13 @@ static void mMsg_DrawWindowBody(mMsg_Window_c* msg_p, GAME* game, int mode) {
   else {
     gSPDisplayList(NOW_POLY_OPA_DISP++, mMsg_init_disp);
     gDPSetPrimColor(NOW_POLY_OPA_DISP++, 0, 255, window_background_color->r, window_background_color->g, window_background_color->b, window_background_color->a);
+#ifdef TARGET_PC
+    if (chat_short) mMsg_ChatBodyMatrix(graph, mode, mMsg_chat_body_scale_y, 0.0f);
+#endif
     gSPDisplayList(NOW_POLY_OPA_DISP++, con_kaiwa2_modelT);
+#ifdef TARGET_PC
+    if (chat_short) mMsg_ChatBodyMatrix(graph, mode, 1.0f, mMsg_chat_name_shift);
+#endif
 
     if (msg_p->show_actor_name) {
       mMsg_DrawNameWindow(msg_p, game, mode);

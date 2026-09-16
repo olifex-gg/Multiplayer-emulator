@@ -30,7 +30,9 @@ static void mMsg_draw_font(mMsg_Window_c* msg_p, GAME* game) {
   scale.y = msg_p->text_scale;
 
   pos.x = msg_p->center_x - (96.0f * scale.x);
-  pos.y = msg_p->center_y - (32.0f * scale.y);
+  /* Four lines start 32 px above the centre; fewer (multiplayer chat) stay
+   * centred in the shorter window. */
+  pos.y = msg_p->center_y - (8.0f * (f32)msg_p->text_lines * scale.y);
 
   if ((msg_p->status_flags & mMsg_STATUS_FLAG_VOICE_ENTRY)) {
     if ((msg_p->status_flags & mMsg_STATUS_FLAG_18)) {

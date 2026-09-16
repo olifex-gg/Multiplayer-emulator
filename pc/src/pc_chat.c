@@ -1,8 +1,7 @@
 /* pc_chat.c - in-game text chat: the line you type at the bottom of the
- * screen, and the hand-over of each message to the game's own thought bubble
- * (m_chat_bubble.c) over the head of the resident who said it. A speaker we
- * cannot see (another room, off screen) gets a line in the top-left corner
- * instead so the message is not lost. See pc_chat.h. */
+ * screen, and the hand-over of each message to the game's own speech window
+ * (m_chat_bubble.c), where it appears with the sender's name on the tag the
+ * way a villager's words do. See pc_chat.h. */
 #include "pc_platform.h" /* first: it sets up SDL without SDL's main() rename */
 #include "pc_chat.h"
 
@@ -26,8 +25,6 @@
 
 int g_pc_chat_typing;
 
-/* What each resident last said, for the corner fallback. */
-static char        s_last_text[ACNET_MAX_PLAYERS][ACNET_CHAT_LEN + 1];
 static char        s_input[ACNET_CHAT_LEN + 1];
 static int         s_input_len;
 static int         s_swallow_open_key; /* the T that opened the line also arrives as text */
@@ -48,8 +45,7 @@ static void chat_say(int slot, const char* text) {
     if (slot < 0 || slot >= ACNET_MAX_PLAYERS) {
         return;
     }
-    snprintf(s_last_text[slot], sizeof(s_last_text[slot]), "%s", text);
-    mCB_say(slot, text); /* the game's bubble over their head */
+    mCB_say(slot, text); /* the game's speech window, with their name on the tag */
     OSReport("[chat] %s: %s\n", chat_name(slot), text);
 }
 
@@ -186,8 +182,6 @@ static void chat_rect(GRAPH* graph, f32 x0, f32 y0, f32 x1, f32 y1, int alpha) {
 
 void pc_chat_draw(struct game_s* game) {
     GRAPH* graph;
-    Uint32 now;
-    int slot, corner = 0;
     int in_slot;
     char text[ACNET_CHAT_LEN + 1];
 
@@ -198,42 +192,19 @@ void pc_chat_draw(struct game_s* game) {
     while (pc_net_poll_chat(&in_slot, text, sizeof(text))) {
         chat_say(in_slot, text);
     }
-
-    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
-        if (mCB_active(slot) && !mCB_visible(slot)) corner++;
-    }
-    if (corner == 0 && !g_pc_chat_typing) {
+    if (!g_pc_chat_typing) {
         return;
     }
 
-    now = SDL_GetTicks();
     graph = game->graph;
     mFont_SetMatrix(graph, mFont_MODE_FONT);
-
-    if (corner) {
-        /* Speakers we cannot see: their line in the corner, while their bubble
-         * would be up. */
-        f32 cy = 6.0f;
-        for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
-            char line[ACNET_NAME_LEN + 2 + ACNET_CHAT_LEN + 1];
-            f32 w;
-            if (!(mCB_active(slot) && !mCB_visible(slot))) continue;
-            snprintf(line, sizeof(line), "%s: %s", chat_name(slot), s_last_text[slot]);
-            w = (f32)pc_text_width(line) * CHAT_SCALE;
-            chat_rect(graph, 2.0f, cy - 2.0f, 10.0f + w, cy + CHAT_LINE_H, 110);
-            pc_text_draw(game, line, 6.0f, cy, 255, 255, 255, 255, CHAT_SCALE);
-            cy += CHAT_LINE_H + 1.0f;
-        }
-    }
-
-    if (g_pc_chat_typing) {
+    {
         char line[ACNET_CHAT_LEN + 8];
         f32 y = 240.0f - 18.0f;
-        snprintf(line, sizeof(line), "> %s%s", s_input, ((now / 400) & 1) ? "_" : " ");
+        snprintf(line, sizeof(line), "> %s%s", s_input, ((SDL_GetTicks() / 400) & 1) ? "_" : " ");
         chat_rect(graph, 2.0f, y - 3.0f, 318.0f, y + CHAT_LINE_H + 2.0f, 150);
         pc_text_draw(game, line, 6.0f, y, 255, 240, 170, 255, CHAT_SCALE);
         pc_text_draw(game, "Enter: send   Esc: cancel", 200.0f, y, 170, 170, 170, 255, 0.6f);
     }
-
     mFont_UnSetMatrix(graph, mFont_MODE_FONT);
 }

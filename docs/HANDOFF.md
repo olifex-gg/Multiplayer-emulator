@@ -210,24 +210,29 @@ when `PADRead` polled the keyboard, and Enter is Start. `pc_chat_blocks_pad()` n
 the pad blocked until that key's `SDL_KEYUP` (with a 1.5 s fallback), and `pc_main.c`
 forwards key-ups to the chat for it. Names come from the server's login names
 (`pc_net_peer_name`). Rig: `[chat] Owen: hello alana` in both logs, no inventory
-afterwards. *Bubbles (2026-09-16):* the message is shown in the game's own thought
-bubble, not a corner list and not a homemade box (the user was clear on that). It is
-the item-name bubble of `m_watch_my_step.c`, the one that appears over your head when
-you stand on an item: `src/game/m_chat_bubble.c` (PC build only) copies its state
-machine and draw code exactly -- modes 1/2 pop the two dots in two frames apart
-(`fki_win_w1T/w2T`), mode 3 grows the bubble (`fki_win_w3T`, scale from the text width:
-`width * 0.875 - 17.5`, over 122.5) and eases the opacity, mode 4 fades (`fki_win_w4`);
-placement to the upper left/right and above/below is decided from the character's
-projected position exactly as the game does; the text is `mFont_SetLineStrings` at
-0.875 in the game font, colour (45,45,35), at the game's own text position formula.
-One instance per resident, anchored through `Puppet_chat_actor(play, slot)` (our own
-character, or that resident's puppet), driven by `mCB_move`/`mCB_draw` from `play_main`
-right after `watch_my_step_move`/`_draw`. ASCII becomes the game's character set through
-the same table the PC text editor uses (unsupported punctuation becomes '?'). A message
-wider than the bubble (about 150 px of text) is paged whole-word by whole-word, each
-page 1.5 s plus 0.12 s a character, the last a second longer, like the game's dialogue.
-`pc_chat.c` now only owns the input line and hands messages to `mCB_say`; a speaker
-with no actor in our scene gets a corner line while their bubble would be up.
+afterwards. *The speech window (2026-09-16):* after two rounds (a corner list, then the
+item-name thought bubble over the head) the user asked for the villagers' speech
+bubble itself, so that long messages fit, sized to the message. `src/game/m_chat_bubble.c`
+(PC build only; the file name is historical) drives the game's own message window
+(`mMsg`): it builds the text in the game's character set, word-wraps it onto up to four
+lines (`CHAR_NEW_LINE` between them; the limit is 440 of `mFont_GetStringWidth`'s units, about 2.6 times the drawn pixels, which ends where a villager's longest lines do; the rest of a longer message follows in a second window), appends the timed-end control code
+(`mFont_CONT_CODE_MSG_TIME_END`, unit 4 frames: 30 + one per character) and the end
+code, and calls `mMsg_request_main_appear(window, NULL, TRUE, colour, mMsg_CHAT_MSG_NO, 5)`.
+Three hooks in `m_msg` under `TARGET_PC`: `mMsg_LoadMsgData` copies `mMsg_chat_text`
+for that message number instead of reading the ROM; `mMsg_Set_client_actor_p` and
+`mMsg_DrawWindowClientName` put `mMsg_chat_name` (the resident's saved character name,
+else their login name) on the tag when there is no client actor; `mMsg_DrawWindowBody`
+draws the body `mMsg_chat_body_scale_y` as tall ((16 lines + 32) / 96) and moves the tag
+down `mMsg_chat_name_shift` px, and `m_msg_draw_font.c_inc` centres the text block on
+`text_lines` instead of assuming four. The tag colours follow the resident's gender as
+the game colours boys and girls. `mMsg_Set_LockContinue` hides the continue button and
+makes A/B leave the window alone; the module unlocks it, restores `text_lines = 4` and
+clears the hooks when the window hides or a villager takes it (the loader stamps
+`msg_no`, so a takeover is visible). A window opened this way does not freeze the
+player: only `mDemo` does that, and chat never goes through it. Everything with no
+speaker actor was checked NULL-safe (name lookups, voice spec, sound spec: the voice
+becomes the generic animalese spec 2, so the words are "spoken"). The clock (`m_banti.c`) fades while any message window is up, as it does for a conversation. Queue of 8; a message
+waits while a villager conversation or any demo is running.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:
@@ -407,8 +412,8 @@ in-game side. The recipe that confirmed the puppet fix:
    the game as B); `--anim-cycle N`, `--anim-speed S` and `--anim-once` on the CLI sweep
    or hold animations. Never press Start (Return) while the driven character is in the
    middle of an action such as a pick-up: it cancels it.
-   `gamekeys.ps1 ptype` followed by `ptap Return` sends a chat line; the bubble is
-   visible in the sender's own window at once, so one game is enough to check it.
+   `gamekeys.ps1 ptype` followed by `ptap Return` sends a chat line; the speech window
+   opens in the sender's own game at once, so one game is enough to check it.
    `--item N` puts a tool in the fake resident's hand (1 axe, 10 net, 12 umbrella, 52
    rod, 54 shovel: the item kind + 1). **Pair it with the tool's holding pose** via
    `--anim`: 2 axe, 29 net, 18 umbrella, 67 rod, 83 shovel (`mPlayer_ANIM_*1`). A real

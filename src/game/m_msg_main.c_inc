@@ -322,7 +322,28 @@ static int mMsg_Count_MsgData(u8* data) {
     return i;
 }
 
+#ifdef TARGET_PC
+u8  mMsg_chat_text[mMsg_MSG_BUF_SIZE];
+int mMsg_chat_text_len;
+u8  mMsg_chat_name[16];
+int mMsg_chat_name_len;
+f32 mMsg_chat_body_scale_y = 1.0f;
+f32 mMsg_chat_name_shift = 0.0f;
+#endif
+
 static int mMsg_LoadMsgData(mMsg_Data_c* msg_data, int index, int cut) {
+#ifdef TARGET_PC
+    /* Multiplayer chat: the text is ours, not the message ROM's. */
+    if (index == mMsg_CHAT_MSG_NO && msg_data != NULL && mMsg_chat_text_len > 0 &&
+        mMsg_chat_text_len <= mMsg_MSG_BUF_MAX) {
+        memcpy(msg_data->text_buf.data, mMsg_chat_text, (size_t)mMsg_chat_text_len);
+        msg_data->msg_no = index;
+        msg_data->data_loaded = TRUE;
+        msg_data->msg_len = mMsg_Count_MsgData(msg_data->text_buf.data);
+        msg_data->cut = cut;
+        return TRUE;
+    }
+#endif
     if (msg_data != NULL) {
         u32 addr;
         u32 size;
