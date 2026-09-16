@@ -7,6 +7,9 @@
 #include "m_fbdemo_triforce.h"
 #include "m_fbdemo_fade.h"
 #include "m_debug.h"
+#ifdef TARGET_PC
+#include "ac_puppet.h"
+#endif
 #include "boot.h"
 #include "version.h"
 #include "m_bgm.h"
@@ -904,6 +907,12 @@ extern void play_main(GAME* game) {
         game_debug_draw_last(game, graph);
         game_draw_last(graph);
     }
+
+#ifdef TARGET_PC
+    /* Multiplayer fork: if the player's move proc did not run this frame
+     * (the game is paused), still tell the other residents where we are. */
+    Puppet_net_idle(game);
+#endif
 
     game->doing_point = 0;
     game->doing_point_specific = 0XBe;

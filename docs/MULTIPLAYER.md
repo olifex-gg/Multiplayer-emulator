@@ -296,6 +296,14 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   released, since Enter is also Start). All confirmed with two games on one PC; protocol
   version 4, e2e checks 22-24.
 
+- **Audit (step 4b).** Protocol version 5: the puppet plays each animation layer in the
+  sender's playback mode (one-shot or loop) instead of looping everything, and shows the
+  item a player lifts overhead after a pick-up. All 157 player animations were run
+  through a puppet, posed and playing, without a crash. A player whose game is paused
+  (pockets, menus) keeps streaming from the play loop, so they no longer vanish from the
+  others' towns. Pockets confirmed per resident with two real games: a dropped shirt left
+  one player's pockets, not the other's, crossed to the other town and survived a restart.
+
 What is **not** there yet: a villager copy that was never loaded on the follower is not
 spawned; villager acts with a target (chasing an insect, reacting to a tool, greeting the
 player) run as walk/stand on the copies; a puppet's held item plays its animation but not

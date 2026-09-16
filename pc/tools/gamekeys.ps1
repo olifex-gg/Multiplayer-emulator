@@ -14,6 +14,9 @@
 # Windows refuses SetForegroundWindow from a script, so `tap`/`hold` usually do not.
 # Key names follow keybindings.ini defaults: Space=A, LShift=B, Return=Start, X, Y, Z,
 # Q=L, E=R, W/A/S/D=stick, Up/Down/Left/Right=C-stick, I/J/K/L=D-pad, Escape.
+# A POSTED Left Shift never reaches the game as B: SDL treats Shift specially on
+# Windows (it polls the real key state for modifiers). Rebind B to C in the test
+# copy's keybindings.ini (`b = C`) and press C here instead.
 param([string]$cmd, [string]$a1, [string]$a2, [string]$a3, [string]$a4)
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -57,10 +60,10 @@ if (-not ("GK" -as [type])) { Add-Type -TypeDefinition $sig }
 # otherwise disagree about where the window is.
 [GK]::SetProcessDPIAware() | Out-Null
 $scan = @{ Space=0x39; Return=0x1C; LShift=0x2A; X=0x2D; Y=0x15; Z=0x2C; Q=0x10; E=0x12; W=0x11; A=0x1E; S=0x1F; D=0x20;
-           I=0x17; J=0x24; K=0x25; L=0x26; Escape=0x01; Up=0x48; Down=0x50; Left=0x4B; Right=0x4D; T=0x14; Back=0x0E }
+           I=0x17; J=0x24; K=0x25; L=0x26; Escape=0x01; Up=0x48; Down=0x50; Left=0x4B; Right=0x4D; T=0x14; Back=0x0E; C=0x2E }
 $ext = @{ Up=$true; Down=$true; Left=$true; Right=$true }
 $vk = @{ Space=0x20; Return=0x0D; LShift=0x10; X=0x58; Y=0x59; Z=0x5A; Q=0x51; E=0x45; W=0x57; A=0x41; S=0x53; D=0x44;
-         I=0x49; J=0x4A; K=0x4B; L=0x4C; Escape=0x1B; Up=0x26; Down=0x28; Left=0x25; Right=0x27; T=0x54; Back=0x08 }
+         I=0x49; J=0x4A; K=0x4B; L=0x4C; Escape=0x1B; Up=0x26; Down=0x28; Left=0x25; Right=0x27; T=0x54; Back=0x08; C=0x43 }
 function PType([string]$text) {
   $p = Get-Game; if (-not $p) { throw "game window not found" }
   foreach ($ch in $text.ToCharArray()) {

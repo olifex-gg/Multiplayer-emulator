@@ -168,3 +168,10 @@ These each cost a debugging cycle. Do not regress them.
     (`ACNET_MSG_RESIDENT_PUSH`) the moment they change. The server marks a pushed
     resident as saved so their blocks are protected from everyone else's uploads; do not
     weaken that, and never push someone else's blocks.
+15. **The player's move proc stops while the game is paused** (pockets open, any menu, a
+    letter), and that is where the per-frame sync runs. Everything we *send* therefore
+    lives in `Puppet_stream_local`, which `Puppet_net_idle` (end of `play_main`) calls on
+    any frame the move proc skipped; otherwise a friend reading a letter vanished from
+    everyone's town after three seconds. Incoming changes (land, blocks) simply queue
+    until the pause ends, which is fine. Anything new that must keep flowing while paused
+    goes in the stream function, not the update function.

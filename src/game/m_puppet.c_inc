@@ -41,6 +41,8 @@
 /* The wire protocol's idea of "standing still" must be the player's own. */
 typedef char puppet_wire_anim_check[(ACNET_PLAYER_ANIM_WAIT == mPlayer_ANIM_WAIT1) ? 1 : -1];
 typedef char puppet_wire_area_check[(ACNET_AREA_FIELD == SCENE_FG) ? 1 : -1];
+typedef char puppet_wire_mode_check[(ACNET_ANIM_MODE_STOP == cKF_FRAMECONTROL_STOP &&
+                                     ACNET_ANIM_MODE_REPEAT == cKF_FRAMECONTROL_REPEAT) ? 1 : -1];
 /* Runtime field placeholders start where the protocol says they do. */
 typedef char puppet_runtime_start_check[(ACNET_LAND_RUNTIME_START == DUMMY_START) ? 1 : -1];
 typedef char puppet_runtime_end_check[(ACNET_LAND_RUNTIME_END == RSV_SHOP_PAPER) ? 1 : -1];
@@ -134,6 +136,11 @@ typedef struct {
     int have_seq;
     int item_kind;    /* what is in its hand (mPlayer_ITEM_KIND_*), -1 for nothing */
     int item_anim;    /* the tool's own animation (item data index), -1 for none */
+    int mode0, mode1; /* one-shot or looping, per layer */
+    int item_mode;
+    int   show_item;  /* an item shown overhead / in the hands (a pick-up), and where */
+    f32   show_scale; /* 0 = nothing shown */
+    xyz_t show_pos;
 } puppet_anim_t;
 
 static puppet_anim_t s_anim[ACNET_MAX_PLAYERS];
@@ -217,7 +224,7 @@ static f32 Puppet_clamp_frame(const cKF_Animation_R_c* anim, f32 frame) {
 /* A fresh sample of the animation we are already playing: we have been
  * advancing it ourselves at the sender's speed, so only snap to their frame
  * if we have drifted, which keeps 30 Hz samples from making a 60 fps puppet
- * stutter. */
+ * stutter. A looping animation may legitimately be a whole loop apart. */
 static void Puppet_resync_frame(cKF_FrameControl_c* fc, f32 frame) {
     f32 max = fc->max_frames;
     f32 diff;
@@ -234,12 +241,16 @@ static void Puppet_resync_frame(cKF_FrameControl_c* fc, f32 frame) {
     if (diff < 0.0f) {
         diff = -diff;
     }
-    if (diff > max * 0.5f) { /* wrapped around the loop */
+    if (fc->mode == cKF_FRAMECONTROL_REPEAT && diff > max * 0.5f) { /* wrapped around the loop */
         diff = max - diff;
     }
     if (diff > 2.0f) {
         fc->current_frame = frame;
     }
+}
+
+static int Puppet_mode(int wire_mode) {
+    return wire_mode == ACNET_ANIM_MODE_STOP ? cKF_FRAMECONTROL_STOP : cKF_FRAMECONTROL_REPEAT;
 }
 
 /* Eyes and mouth: an animation that scripts them (yawns, laughs) drives them
@@ -266,9 +277,10 @@ static void Puppet_face_animation(ACTOR* actorx) {
     }
 }
 
-/* Start `anim0`/`anim1` with `part` on the puppet, at the given frames. */
+/* Start `anim0`/`anim1` with `part` on the puppet, at the given frames, each
+ * layer one-shot or looping as the sender's is. */
 static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int anim1, int part, f32 frame0, f32 frame1,
-                                   f32 speed, f32 morph) {
+                                   f32 speed, f32 morph, int mode0, int mode1) {
     puppet_anim_t* a = &s_anim[slot];
     cKF_Animation_R_c* a0 = mPlib_Get_Pointer_Animation(anim0);
     cKF_Animation_R_c* a1 = mPlib_Get_Pointer_Animation(anim1);
@@ -285,10 +297,12 @@ static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int ani
         part = mPlayer_PART_TABLE_NORMAL;
     }
 
-    cKF_SkeletonInfo_R_init_standard_repeat_setframeandspeedandmorph(&p->keyframe0, a0, NULL,
-                                                                     Puppet_clamp_frame(a0, frame0), speed, morph);
-    cKF_SkeletonInfo_R_init_standard_repeat_setframeandspeedandmorph(&p->keyframe1, a1, NULL,
-                                                                     Puppet_clamp_frame(a1, frame1), speed, morph);
+    cKF_SkeletonInfo_R_init_standard_setframeandspeedandmorphandmode(&p->keyframe0, a0, NULL,
+                                                                     Puppet_clamp_frame(a0, frame0), speed, morph,
+                                                                     Puppet_mode(mode0));
+    cKF_SkeletonInfo_R_init_standard_setframeandspeedandmorphandmode(&p->keyframe1, a1, NULL,
+                                                                     Puppet_clamp_frame(a1, frame1), speed, morph,
+                                                                     Puppet_mode(mode1));
     mPlib_DMA_player_Part_Table(p->part_table, part);
     p->animation0_idx = anim0;
     p->animation1_idx = anim1;
@@ -296,6 +310,8 @@ static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int ani
     a->anim0 = anim0;
     a->anim1 = anim1;
     a->part_table = part;
+    a->mode0 = mode0;
+    a->mode1 = mode1;
 }
 
 /* --- Held items -----------------------------------------------------------
@@ -306,11 +322,12 @@ static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int ani
  * skeleton with its own animation, which the sender streams as well; an
  * umbrella is the game's own umbrella tool actor, born as the puppet's child
  * exactly as it is for the player. */
-static void Puppet_set_item_anim(PLAYER_ACTOR* p, int slot, int anim, f32 frame) {
+static void Puppet_set_item_anim(PLAYER_ACTOR* p, int slot, int anim, f32 frame, int mode) {
     puppet_anim_t* a = &s_anim[slot];
     cKF_SkeletonInfo_R_c* kf = &p->item_keyframe;
 
     a->item_anim = anim;
+    a->item_mode = mode;
     if (kf->skeleton == NULL) {
         return;
     }
@@ -326,10 +343,10 @@ static void Puppet_set_item_anim(PLAYER_ACTOR* p, int slot, int anim, f32 frame)
     if (!(frame >= 1.0f)) {
         frame = 1.0f;
     }
-    /* STOP mode: a one-shot swing must not loop while the sender holds its
-     * last frame; a looping animation is simply re-synced when it wraps. */
+    /* One-shot or looping as the sender's tool animation is (a swing holds
+     * its last frame; the ready pose loops). */
     cKF_SkeletonInfo_R_init_standard_setframeandspeedandmorphandmode(kf, mPlib_Get_Item_DataPointer(anim), NULL,
-                                                                     frame, 1.0f, 0.0f, cKF_FRAMECONTROL_STOP);
+                                                                     frame, 1.0f, 0.0f, Puppet_mode(mode));
 }
 
 static void Puppet_drop_umbrella(PLAYER_ACTOR* p) {
@@ -339,7 +356,7 @@ static void Puppet_drop_umbrella(PLAYER_ACTOR* p) {
     }
 }
 
-static void Puppet_set_item(PLAYER_ACTOR* p, int slot, int kind, int anim, f32 frame) {
+static void Puppet_set_item(PLAYER_ACTOR* p, int slot, int kind, int anim, f32 frame, int mode) {
     puppet_anim_t* a = &s_anim[slot];
     int shape = -1;
 
@@ -366,9 +383,10 @@ static void Puppet_set_item(PLAYER_ACTOR* p, int slot, int kind, int anim, f32 f
     if (mPlayer_ITEM_DATA_VALID(shape) && mPlib_Get_Item_DataPointerType(shape) != mPlayer_ITEM_DATA_TYPE_GFX) {
         cKF_SkeletonInfo_R_ct(&p->item_keyframe, mPlib_Get_Item_DataPointer(shape), NULL, p->item_joint_data,
                               p->item_morph_data);
-        Puppet_set_item_anim(p, slot, anim, frame);
+        Puppet_set_item_anim(p, slot, anim, frame, mode);
     } else {
         a->item_anim = anim;
+        a->item_mode = mode;
     }
     OSReport("[puppet] resident %d now holds %s (kind %d)\n", slot,
              kind < 0 ? "nothing" : mPlayer_ITEM_IS_UMBRELLA(kind) ? "an umbrella"
@@ -396,6 +414,65 @@ static int Puppet_draw_After(GAME* game, cKF_SkeletonInfo_R_c* kf, int joint_no,
     return TRUE;
 }
 
+/* What the local player is showing rather than holding as a tool, exactly as
+ * Player_actor_draw_Normal decides it: the item lifted overhead after a
+ * pick-up, what the shovel dug up as it comes out of the ground. Sent as the
+ * item id, its scale and its world position, so a puppet can draw it with
+ * the same field-item draw call without knowing the sender's state machine. */
+static void Puppet_shown_item(PLAYER_ACTOR* lp, GAME* game, acnet_player_state_t* st) {
+    mActor_name_t item = EMPTY_NO;
+    f32 scale = 0.0f;
+    xyz_t* pos = NULL;
+    int idx = mPlib_get_player_actor_main_index(game);
+
+    if (idx == mPlayer_INDEX_PICKUP) {
+        if (lp->main_data.pickup.signboard_flag == FALSE) {
+            item = lp->main_data.pickup.item;
+            scale = lp->main_data.pickup.scale;
+            pos = &lp->main_data.pickup.item_pos;
+        }
+    } else if (idx == mPlayer_INDEX_PICKUP_JUMP) {
+        if (lp->main_data.pickup_jump.ftr_flag == FALSE) {
+            item = lp->main_data.pickup_jump.item;
+            scale = lp->main_data.pickup_jump.scale;
+            pos = &lp->main_data.pickup_jump.item_pos;
+        }
+    } else if (idx == mPlayer_INDEX_GET_SCOOP) {
+        item = lp->main_data.get_scoop.item;
+        scale = lp->main_data.get_scoop.scale;
+        pos = lp->keyframe0.frame_control.current_frame <= 42.0f ? &lp->scoop_pos : &lp->left_hand_pos;
+    } else if (idx == mPlayer_INDEX_PUTAWAY_SCOOP) {
+        item = lp->main_data.putaway_scoop.item;
+        scale = lp->main_data.putaway_scoop.scale;
+        pos = &lp->left_hand_pos;
+    }
+    if (scale > 0.0f && item != EMPTY_NO && pos != NULL) {
+        st->show_item = (uint16_t)item;
+        st->show_scale = scale;
+        st->show_x = pos->x;
+        st->show_y = pos->y;
+        st->show_z = pos->z;
+    }
+}
+
+static void Puppet_shown_item_draw(GAME* game, const puppet_anim_t* a) {
+    xyz_t pos;
+
+    if (!(a->show_scale > 0.0f)) {
+        return;
+    }
+    pos = a->show_pos;
+    if (mFI_GET_TYPE(mFI_GetFieldId()) == mFI_FIELD_FG) {
+        if (Common_Get(clip).bg_item_clip != NULL && Common_Get(clip).bg_item_clip->single_draw_proc != NULL) {
+            Common_Get(clip).bg_item_clip->single_draw_proc(game, (mActor_name_t)a->show_item, &pos, a->show_scale,
+                                                            NULL, NULL, NULL);
+        }
+    } else if (Common_Get(clip).shop_goods_clip != NULL && Common_Get(clip).shop_goods_clip->single_draw_proc != NULL) {
+        Common_Get(clip).shop_goods_clip->single_draw_proc(game, (mActor_name_t)a->show_item, &pos, a->show_scale, 0,
+                                                           FALSE);
+    }
+}
+
 static void Puppet_item_draw(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
     GRAPH* graph = game->graph;
@@ -403,6 +480,7 @@ static void Puppet_item_draw(ACTOR* actorx, GAME* game) {
     int shape;
     Mtx* mtx;
 
+    Puppet_shown_item_draw(game, &s_anim[actorx->actor_specific]);
     if (kind < 0) {
         return;
     }
@@ -477,7 +555,8 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     s_anim[slot].built_gender = gender;
     s_anim[slot].have_seq = 0;
     Puppet_start_animation(p, slot, mPlayer_ANIM_WAIT1, mPlayer_ANIM_WAIT1, mPlayer_PART_TABLE_NORMAL, 1.0f, 1.0f,
-                           1.0f, 0.0f);
+                           1.0f, 0.0f, ACNET_ANIM_MODE_REPEAT, ACNET_ANIM_MODE_REPEAT);
+    s_anim[slot].show_scale = 0.0f;
     Player_actor_set_eye_pattern(actorx, 0);
     Player_actor_set_mouth_pattern(actorx, 0);
     cKF_SkeletonInfo_R_combine_play(&p->keyframe0, &p->keyframe1, p->part_table);
@@ -532,13 +611,25 @@ static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
             /* New animation: start it where the sender is, blending from the
              * old pose over a few frames the way the player's own changes do. */
             Puppet_start_animation(p, slot, st.anim0_idx, st.anim1_idx, st.part_table_idx, st.anim0_frame,
-                                   st.anim1_frame, st.anim_speed, -4.0f);
+                                   st.anim1_frame, st.anim_speed, -4.0f, st.anim0_mode, st.anim1_mode);
         } else if (!a->have_seq || st.seq != a->seq) {
+            if (st.anim0_mode != a->mode0 || st.anim1_mode != a->mode1) {
+                p->keyframe0.frame_control.mode = Puppet_mode(st.anim0_mode);
+                p->keyframe1.frame_control.mode = Puppet_mode(st.anim1_mode);
+                a->mode0 = st.anim0_mode;
+                a->mode1 = st.anim1_mode;
+            }
             p->keyframe0.frame_control.speed = st.anim_speed;
             p->keyframe1.frame_control.speed = st.anim_speed;
             Puppet_resync_frame(&p->keyframe0.frame_control, st.anim0_frame);
             Puppet_resync_frame(&p->keyframe1.frame_control, st.anim1_frame);
         }
+        /* Something shown in the hands (a pick-up): the sender says where. */
+        a->show_item = st.show_item;
+        a->show_scale = st.show_scale > 0.0f && st.show_scale < 1.0f ? st.show_scale : 0.0f;
+        a->show_pos.x = st.show_x;
+        a->show_pos.y = st.show_y;
+        a->show_pos.z = st.show_z;
         /* The tool in their hand, and how it is bending. */
         {
             int kind = ACNET_ITEM_TO_KIND(st.item);
@@ -546,9 +637,9 @@ static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
                 kind = -1;
             }
             if (kind != a->item_kind) {
-                Puppet_set_item(p, slot, kind, st.item_anim, st.item_frame);
-            } else if (st.item_anim != a->item_anim) {
-                Puppet_set_item_anim(p, slot, st.item_anim, st.item_frame);
+                Puppet_set_item(p, slot, kind, st.item_anim, st.item_frame, st.item_mode);
+            } else if (st.item_anim != a->item_anim || st.item_mode != a->item_mode) {
+                Puppet_set_item_anim(p, slot, st.item_anim, st.item_frame, st.item_mode);
             } else if (p->item_keyframe.animation != NULL && (!a->have_seq || st.seq != a->seq)) {
                 Puppet_resync_frame(&p->item_keyframe.frame_control, st.item_frame);
             }
@@ -739,7 +830,9 @@ static void Puppet_npc_stream(GAME_PLAY* play) {
     int n = 0;
     ACTOR* a;
 
-    if (self < 0 || play->scene_id != SCENE_FG || (play->game_frame % 6) != 0) {
+    static u32 tick;
+
+    if (self < 0 || play->scene_id != SCENE_FG || (++tick % 6) != 0) {
         return;
     }
     for (a = play->actor_info.list[ACTOR_PART_NPC].actor; a != NULL && n < ACNET_NPC_MAX; a = a->next_actor) {
@@ -877,6 +970,103 @@ static ACTOR* Puppet_find(GAME_PLAY* play, int slot) {
     return NULL;
 }
 
+/* Everything we TELL the others: which save block we are, where we are and
+ * what our body is doing, our own character and house when they changed,
+ * the villagers we own, the weather if we are the authority. Split out from
+ * the per-frame update because the player's move proc, which drives that,
+ * does not run while the game is paused (pockets open, a menu, a letter):
+ * without this the others saw us vanish three seconds into reading a letter.
+ * paused: the pose is frozen, so it is sent with speed 0 to hold it. */
+static int s_updated_this_frame;
+
+static void Puppet_stream_local(GAME_PLAY* play, ACTOR* player_actor, int paused) {
+    PLAYER_ACTOR* lp = (PLAYER_ACTOR*)player_actor;
+    GAME* game = (GAME*)play;
+    int local_slot = pc_net_local_slot();
+    static u32 push_tick;
+
+    if (local_slot < 0 || !Puppet_in_town(play)) {
+        return;
+    }
+
+    /* Our slot must be the save block our character lives in (see
+     * acnet_claim_slot_t). The block is only known once we are in town. */
+    pc_net_set_player_no(Common_Get(player_no));
+
+    /* Where we are, and exactly what our body is doing, so our puppet in the
+     * others' games plays the same thing. */
+    {
+        acnet_player_state_t st;
+        memset(&st, 0, sizeof(st));
+        st.area = Puppet_area(play);
+        st.x = player_actor->world.position.x;
+        st.y = player_actor->world.position.y;
+        st.z = player_actor->world.position.z;
+        st.angle_y = (int16_t)player_actor->shape_info.rotation.y;
+        st.anim0_idx = (int16_t)lp->animation0_idx;
+        st.anim1_idx = (int16_t)lp->animation1_idx;
+        st.part_table_idx = (int8_t)lp->part_table_idx;
+        st.anim0_frame = lp->keyframe0.frame_control.current_frame;
+        st.anim1_frame = lp->keyframe1.frame_control.current_frame;
+        st.anim_speed = paused ? 0.0f : lp->keyframe0.frame_control.speed;
+        st.item = mPlayer_ITEM_KIND_VALID(lp->item_kind) ? ACNET_ITEM_FROM_KIND(lp->item_kind) : ACNET_ITEM_NONE;
+        st.item_anim = (int16_t)lp->item_animation_idx[lp->item_bank_idx & 1];
+        st.item_frame = lp->item_keyframe.frame_control.current_frame;
+        st.anim0_mode = (uint8_t)lp->keyframe0.frame_control.mode;
+        st.anim1_mode = (uint8_t)lp->keyframe1.frame_control.mode;
+        st.item_mode = (uint8_t)lp->item_keyframe.frame_control.mode;
+        Puppet_shown_item(lp, game, &st);
+        st.flags = Common_Get(player_bee_swell_flag) ? ACNET_STATE_FLAG_BEE_SWELL : 0;
+        {
+            ACTOR* talk = mDemo_Get_talk_actor();
+            st.talk_npc = (talk != NULL && talk->part == ACTOR_PART_NPC) ? (uint16_t)talk->npc_id : 0;
+        }
+        pc_net_send_player_state(&st);
+    }
+
+    /* Our own character and house go out to the others as soon as they
+     * change (a brand-new resident who has never saved, a new shirt, moved
+     * furniture), without waiting for a save. pc_net hashes the blocks and
+     * only sends real changes; checked once a second. */
+    if (local_slot < ACNET_MAX_PLAYERS && (++push_tick % 60) == 30 && Puppet_slot_has_resident(local_slot)) {
+        static Private_c push_private ATTRIBUTE_ALIGN(32);
+        static mHm_hs_c push_home ATTRIBUTE_ALIGN(32);
+        memcpy(&push_private, Save_GetPointer(private_data[local_slot]), sizeof(push_private));
+        memcpy(&push_home, Save_GetPointer(homes[local_slot]), sizeof(push_home));
+        pc_save_bswap_private(&push_private, PC_BSWAP_TO_BE);
+        pc_save_bswap_home(&push_home, PC_BSWAP_TO_BE);
+        if (pc_net_push_own_blocks(&push_private, sizeof(push_private), &push_home, sizeof(push_home), 0)) {
+            OSReport("[puppet] sent my character and house to the other residents (they changed)\n");
+        }
+    }
+
+    /* The authority's sky is the town's sky, and its land-renewal timestamp
+     * is everyone's, so nobody renews twice. */
+    if (pc_net_is_authority()) {
+        pc_net_send_weather(Common_Get(weather), Common_Get(weather_intensity), Save_GetPointer(all_grow_renew_time),
+                            sizeof(lbRTC_time_c));
+    }
+
+    /* Villagers: stream the ones we own (frozen with us while paused). */
+    if (pc_net_puppets_enabled()) {
+        Puppet_npc_stream(play);
+    }
+}
+
+/* Called at the end of every play frame (play_main). If the player's move
+ * proc did not run this frame -- the game is paused -- send our state anyway. */
+void Puppet_net_idle(GAME* game) {
+    GAME_PLAY* play = (GAME_PLAY*)game;
+
+    if (!s_updated_this_frame && pc_net_local_slot() >= 0) {
+        ACTOR* pl = GET_PLAYER_ACTOR_ACTOR(play);
+        if (pl != NULL) {
+            Puppet_stream_local(play, pl, TRUE);
+        }
+    }
+    s_updated_this_frame = 0;
+}
+
 void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     GAME_PLAY* play = (GAME_PLAY*)game;
     PLAYER_ACTOR* lp = (PLAYER_ACTOR*)player_actor;
@@ -886,12 +1076,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     if (local_slot < 0) {
         return; /* single-player: no server connected */
     }
-
-    /* 0. Our slot must be the save block our character lives in (see
-     *    acnet_claim_slot_t). The block is only known once we are in town. */
-    if (Puppet_in_town(play)) {
-        pc_net_set_player_no(Common_Get(player_no));
-    }
+    s_updated_this_frame = 1;
 
     /* 0b. Do not walk through other residents. The collision system already
      *     works out how far we overlap a puppet (its body is immovable, so
@@ -909,32 +1094,8 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         }
     }
 
-    /* 1. Broadcast our own state: where we are, and exactly what our body
-     *    is doing, so our puppet in the others' games plays the same thing. */
-    if (Puppet_in_town(play)) {
-        acnet_player_state_t st;
-        memset(&st, 0, sizeof(st));
-        st.area = Puppet_area(play);
-        st.x = player_actor->world.position.x;
-        st.y = player_actor->world.position.y;
-        st.z = player_actor->world.position.z;
-        st.angle_y = (int16_t)player_actor->shape_info.rotation.y;
-        st.anim0_idx = (int16_t)lp->animation0_idx;
-        st.anim1_idx = (int16_t)lp->animation1_idx;
-        st.part_table_idx = (int8_t)lp->part_table_idx;
-        st.anim0_frame = lp->keyframe0.frame_control.current_frame;
-        st.anim1_frame = lp->keyframe1.frame_control.current_frame;
-        st.anim_speed = lp->keyframe0.frame_control.speed;
-        st.item = mPlayer_ITEM_KIND_VALID(lp->item_kind) ? ACNET_ITEM_FROM_KIND(lp->item_kind) : ACNET_ITEM_NONE;
-        st.item_anim = (int16_t)lp->item_animation_idx[lp->item_bank_idx & 1];
-        st.item_frame = lp->item_keyframe.frame_control.current_frame;
-        st.flags = Common_Get(player_bee_swell_flag) ? ACNET_STATE_FLAG_BEE_SWELL : 0;
-        {
-            ACTOR* talk = mDemo_Get_talk_actor();
-            st.talk_npc = (talk != NULL && talk->part == ACTOR_PART_NPC) ? (uint16_t)talk->npc_id : 0;
-        }
-        pc_net_send_player_state(&st);
-    }
+    /* 1. Tell the others: our slot, our state, our blocks, our villagers. */
+    Puppet_stream_local(play, player_actor, FALSE);
 
     /* 1b. Take any other resident's freshly saved character and house into
      *     our running town. Those blocks are theirs alone, so overwriting
@@ -955,33 +1116,13 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         }
     }
 
-    /* 1b'. And the other way round: our own character and house go out to
-     *      the others as soon as they change (a brand-new resident who has
-     *      never saved, a new shirt, moved furniture), without waiting for
-     *      a save. pc_net hashes the blocks and only sends real changes. */
-    if (Puppet_in_town(play) && local_slot < ACNET_MAX_PLAYERS && (play->game_frame % 60) == 30 &&
-        Puppet_slot_has_resident(local_slot)) {
-        static Private_c push_private ATTRIBUTE_ALIGN(32);
-        static mHm_hs_c push_home ATTRIBUTE_ALIGN(32);
-        memcpy(&push_private, Save_GetPointer(private_data[local_slot]), sizeof(push_private));
-        memcpy(&push_home, Save_GetPointer(homes[local_slot]), sizeof(push_home));
-        pc_save_bswap_private(&push_private, PC_BSWAP_TO_BE);
-        pc_save_bswap_home(&push_home, PC_BSWAP_TO_BE);
-        if (pc_net_push_own_blocks(&push_private, sizeof(push_private), &push_home, sizeof(push_home), 0)) {
-            OSReport("[puppet] sent my character and house to the other residents (they changed)\n");
-        }
-    }
-
     /* 1c. Land: apply the others' changes, send ours. */
     Puppet_land_sync(play);
 
-    /* 1d. The world's clockwork: the authority's sky is the town's sky, and
-     *     its land-renewal timestamp is everyone's, so nobody renews twice. */
+    /* 1d. The world's clockwork: take the authority's sky and its
+     *     land-renewal timestamp (the authority sends them in Puppet_stream_local). */
     if (Puppet_in_town(play)) {
-        if (pc_net_is_authority()) {
-            pc_net_send_weather(Common_Get(weather), Common_Get(weather_intensity),
-                                Save_GetPointer(all_grow_renew_time), sizeof(lbRTC_time_c));
-        } else {
+        if (!pc_net_is_authority()) {
             int type, intensity;
             lbRTC_time_c renew;
             if (pc_net_take_weather(&type, &intensity, &renew, sizeof(renew))) {
@@ -1006,9 +1147,6 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     if (!pc_net_puppets_enabled() || !Puppet_in_town(play)) {
         return; /* other residents not drawn (or not in town yet); town sync is unaffected */
     }
-
-    /* 1e. Villagers: stream the ones we own. */
-    Puppet_npc_stream(play);
 
     /* 2. Update existing puppets from network state, deleting those whose
      *    resident has gone (or whose body no longer matches their block).
@@ -1071,6 +1209,10 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
 
 void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     (void)player_actor;
+    (void)game;
+}
+
+void Puppet_net_idle(GAME* game) {
     (void)game;
 }
 

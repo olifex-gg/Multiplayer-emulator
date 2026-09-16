@@ -21,6 +21,12 @@ extern ACTOR_PROFILE Puppet_Profile;
  * other residents. A no-op when multiplayer is not connected. */
 extern void Puppet_net_update_local(ACTOR* player_actor, GAME* game);
 
+/* Called at the end of every play frame (play_main). While the game is paused
+ * (pockets open, a menu, a letter) the player's move proc does not run, so
+ * this sends our state instead: the others keep seeing us standing there.
+ * A no-op when the move proc ran this frame or multiplayer is off. */
+extern void Puppet_net_idle(GAME* game);
+
 /* Villager sync. Asked by a villager every frame: 1 if another resident's game
  * owns this villager right now and has told us where it is (position, facing,
  * whether it is walking, its act and ACNET_NPC_FLAG_* flags); the villager

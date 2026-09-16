@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 4 /* 4: held items, house index, villager acts, resident push, town clock */
+#define ACNET_PROTOCOL_VERSION 5 /* 5: one-shot vs looping animations, the item shown during a pick-up */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
@@ -390,10 +390,27 @@ typedef struct ACNET_PACKED {
     uint16_t item;
     int16_t  item_anim;
     float    item_frame;
+    /* Whether each animation plays once and holds its last frame (STOP) or
+     * loops (REPEAT): a puppet that looped a one-shot would replay a wave or
+     * a sit-down while the real player holds the pose. */
+    uint8_t  anim0_mode;      /* ACNET_ANIM_MODE_* */
+    uint8_t  anim1_mode;
+    uint8_t  item_mode;
+    uint8_t  reserved3;
+    /* An item the player is showing rather than holding as a tool: what they
+     * just picked up and lift overhead, what the shovel dug up. Its game item
+     * id, its draw scale (0 = nothing shown) and where it is in the world. */
+    uint16_t show_item;
+    uint16_t reserved4;
+    float    show_scale;
+    float    show_x, show_y, show_z;
     uint16_t talk_npc;        /* npc_id of the villager this player is talking to, 0 if none */
     uint8_t  emote;
     uint8_t  reserved;
 } acnet_player_state_t;
+
+#define ACNET_ANIM_MODE_STOP   0 /* cKF_FRAMECONTROL_STOP, checked at compile time in m_puppet */
+#define ACNET_ANIM_MODE_REPEAT 1 /* cKF_FRAMECONTROL_REPEAT */
 
 #define ACNET_ITEM_NONE 0
 #define ACNET_ITEM_FROM_KIND(k) ((uint16_t)((k) + 1))

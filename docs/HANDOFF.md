@@ -212,6 +212,38 @@ forwards key-ups to the chat for it. Names come from the server's login names
 (`pc_net_peer_name`). Rig: `[chat] Owen: hello alana` in both logs, drawn top-left in
 both games, no inventory afterwards.
 
+**Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
+*Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:
+give, knock, mail jump, sit down, pick up...) and the puppet used to loop everything,
+so it would replay a wave while the real player held the pose. The state packet now
+carries `anim0_mode`/`anim1_mode`/`item_mode` and the puppet starts each layer in the
+sender's mode (`Puppet_mode`); `Puppet_resync_frame` only treats a big frame difference
+as a loop wrap in REPEAT mode. Verified with `acnet_cli --anim 2 --anim-speed 1
+--anim-once`: the same held pose five seconds apart. *Shown item:* what the player lifts
+overhead after a pick-up (and what the shovel turns up) is sent as `show_item`,
+`show_scale`, `show_x/y/z`, chosen exactly as `Player_actor_draw_Normal` chooses it
+(`Puppet_shown_item`), and drawn by the puppet through the field-item single-draw call.
+*Sweep:* all 157 `mPlayer_ANIM_*` played through a puppet twice (`--anim-cycle 157`, once
+posed at 250 ms each, once playing at speed 1 for 700 ms each): no crash, no oddities in
+the spot-check screenshots (crouching, lying down, tool poses). *Paused players:* the
+per-frame sync lives in the player's move proc, which does not run while the game is
+paused (pockets, menus, letters), so a friend with their pockets open vanished from
+everyone's town after three seconds and their incoming land cells sat in the queue.
+`Puppet_stream_local` (everything we send) is now also called from `Puppet_net_idle` at
+the end of `play_main` on frames the move proc skipped, with speed 0 so the pose holds
+(rule 15). Verified: Alana's pockets open for ten seconds, 29 states/s still sent, Owen's
+`residents-visible=1` throughout, no removal. *Inventories:* each resident's pockets are
+their own `Private_c`. Alana dropped her work uniform (pockets menu: A on the item, Drop):
+her pockets lost it, Owen's did not change, the shirt appeared on the ground in Owen's
+game through the land relay (once his own pockets were closed; see above), her changed
+block was pushed to the server (`blocks-pushed=2`), and after both games restarted the
+shirt was still on the ground in both, out of the server's town. NOT done tonight: a
+clean pick-up by a driven game (B is Left Shift, and a *posted* Shift never reaches SDL as
+B, so both rigs' `keybindings.ini` now say `B = C`; stand on the item until its name
+bubble shows, then press B), and a gyroid save (the test town's houses had lost their
+owners to a `make_resident.py` mistake, fixed in the script; rebuild the test
+`serverdata` from the real one before the next save test).
+
 **The land relay placeholder bug (found and fixed 2026-09-15).** Alana's copy crashed the
 instant it entered the town: offset inside `mAGrw_RenewalFgItem_ovl` after
 `mPB_force_set_keep_item`, i.e. the inlined `mAGrw_SetItemDump`, reading a garbage
@@ -354,6 +386,10 @@ in-game side. The recipe that confirmed the puppet fix:
    by Owen's house with `--state` 60 units away and a one-second walk; long walks drift
    sideways off terrain (a river bend near Alana's spawn) and never touch the target.
    `acnet_cli --name Carol --area 9 ...` is a resident indoors; `--area 7` outdoors.
+   B is `C` in both rigs (`keybindings.ini`, because a posted Left Shift never reaches
+   the game as B); `--anim-cycle N`, `--anim-speed S` and `--anim-once` on the CLI sweep
+   or hold animations. Never press Start (Return) while the driven character is in the
+   middle of an action such as a pick-up: it cancels it.
    `--item N` puts a tool in the fake resident's hand (1 axe, 10 net, 12 umbrella, 52
    rod, 54 shovel: the item kind + 1). **Pair it with the tool's holding pose** via
    `--anim`: 2 axe, 29 net, 18 umbrella, 67 rod, 83 shovel (`mPlayer_ANIM_*1`). A real

@@ -207,9 +207,10 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         acnet_player_state_t s;
         if (payload_len != sizeof(s)) return 0;
         memcpy(&s, payload, sizeof(s));
-        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f anim=%d/%d part=%d frame=%.1f/%.1f speed=%.2f flags=%u item=%u talk=%u\n",
+        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f anim=%d/%d part=%d frame=%.1f/%.1f speed=%.2f flags=%u item=%u talk=%u mode=%u/%u show=%u\n",
                s.client_id, s.slot, s.seq, s.area, s.x, s.y, s.z, s.anim0_idx, s.anim1_idx, s.part_table_idx,
-               s.anim0_frame, s.anim1_frame, s.anim_speed, s.flags, s.item, s.talk_npc);
+               s.anim0_frame, s.anim1_frame, s.anim_speed, s.flags, s.item, s.talk_npc, s.anim0_mode, s.anim1_mode,
+               s.show_item);
         break;
     }
     default:
@@ -284,6 +285,9 @@ static void usage(void) {
             "       ... --vanish           exit without saying goodbye (a crashed game), after everything else\n"
             "       ... --npc ID,X,Z[,ACT,FLAGS]  send one villager state (we own villager ID at X,Z)\n"
             "       ... --item N            hold item kind N in the --state (0 = empty hands)\n"
+            "       ... --anim-cycle N      with --state-every: a different animation each send, 0..N-1\n"
+            "       ... --anim-speed S      animation speed in the --state (default 0: a held pose)\n"
+            "       ... --anim-once         play the animation once and hold its last frame (default: loop)\n"
             "       ... --push TOWN.gci     push our own two blocks out of TOWN.gci without saving\n"
             "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
             "                              so a running game keeps drawing this fake resident\n"
@@ -310,6 +314,9 @@ int main(int argc, char** argv) {
     const char* npc = NULL;
     const char* push = NULL;
     int item = 0;
+    int anim_cycle = 0, cycle_i = 0;
+    float anim_speed = 0.0f;
+    int anim_once = 0;
     acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -339,6 +346,9 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--npc") == 0 && v) { npc = v; i++; }
         else if (strcmp(a, "--push") == 0 && v) { push = v; i++; }
         else if (strcmp(a, "--item") == 0 && v) { item = atoi(v); i++; }
+        else if (strcmp(a, "--anim-cycle") == 0 && v) { anim_cycle = atoi(v); i++; }
+        else if (strcmp(a, "--anim-speed") == 0 && v) { anim_speed = (float)atof(v); i++; }
+        else if (strcmp(a, "--anim-once") == 0) { anim_once = 1; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -438,7 +448,8 @@ int main(int argc, char** argv) {
         ps.part_table_idx = 0;
         ps.anim0_frame = 1.0f;
         ps.anim1_frame = 1.0f;
-        ps.anim_speed = 0.0f;
+        ps.anim_speed = anim_speed;
+        ps.anim0_mode = ps.anim1_mode = ps.item_mode = anim_once ? ACNET_ANIM_MODE_STOP : ACNET_ANIM_MODE_REPEAT;
         ps.item = (uint16_t)item;
         ps.item_anim = -1;
         ps.item_frame = 1.0f;
@@ -533,6 +544,12 @@ int main(int argc, char** argv) {
             if (state && state_every_ms > 0) {
                 if ((int32_t)(next_state - now) <= 0) {
                     ps.seq++;
+                    if (anim_cycle > 0) { /* sweep: a new animation every send, from its first frame */
+                        ps.anim0_idx = ps.anim1_idx = (int16_t)(cycle_i++ % anim_cycle);
+                        ps.anim0_frame = ps.anim1_frame = 1.0f;
+                        printf("ANIM %d\n", ps.anim0_idx);
+                        fflush(stdout);
+                    }
                     send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
                     next_state = now + (uint32_t)state_every_ms;
                 }
