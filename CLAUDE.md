@@ -145,3 +145,11 @@ These each cost a debugging cycle. Do not regress them.
     the weather and runs the daily land renewal; it sends its weather and its
     `all_grow_renew_time` to the others. Any second game doing either on its own gives two
     residents two different towns (and grows everything twice).
+11. **A villager has one owner, and the followers drive it through its own acts.** Owner =
+    the resident talking to it, else the lowest client id among games with its acre loaded;
+    every game computes that from the same streamed positions. A following copy skips its
+    schedule/think step and is given `aNPC_ACT_WALK` `TO_POINT` / `aNPC_ACT_WAIT` requests
+    (priority 3) toward the streamed spot, so it animates and dodges obstacles like any
+    villager. Never write a villager's position every frame except to correct a copy that
+    is hundreds of units off -- the walk act, the BG check and the talk system all assume
+    they own the position.

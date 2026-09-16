@@ -16,6 +16,8 @@
 #include "m_actor_shadow.h"
 #ifdef TARGET_PC
 #include "pc_bswap.h"
+#include "ac_puppet.h" /* multiplayer fork: villagers owned by another resident's game */
+#include <math.h>      /* sqrtf in the villager follow log */
 #endif
 
 extern aNPC_draw_data_c npc_draw_data_tbl[];

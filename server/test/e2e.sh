@@ -238,4 +238,13 @@ sleep 6
 out=$(cli --name bob)
 grep -q "WELCOME client_id=[0-9]* slot=2" <<<"$out" || fail "bob could not replace his stale session: $out"
 
+echo "21. a villager's state reaches the others, stamped with who sent it"
+cli --name alice --wait 3 > "$TMP/alice_npc.txt" &
+NPPID=$!
+sleep 0.7
+cli --name bob --npc 4660,100,200 --wait 1 > "$TMP/bob_npc.txt"
+wait "$NPPID" || true
+bob_id=$(grep -o "WELCOME client_id=[0-9]*" "$TMP/bob_npc.txt" | grep -o "[0-9]*$")
+grep -q "NPC client_id=$bob_id npc=4660 pos=100.0,0.0,200.0 angle=0 walking=0" "$TMP/alice_npc.txt" || fail "alice got no villager state: $(cat "$TMP/alice_npc.txt")"
+
 echo "ALL PASSED"

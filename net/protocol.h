@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 2 /* 2: player state carries the full animation state */
+#define ACNET_PROTOCOL_VERSION 3 /* 3: villager sync; player state carries who they are talking to */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
@@ -93,7 +93,8 @@ enum acnet_msg {
     ACNET_MSG_LAND_CELLS     = 19,/* C->S->C acnet_land_hdr_t + count * acnet_land_cell_t */
     ACNET_MSG_CLAIM_SLOT     = 20,/* C->S  acnet_claim_slot_t: "my character is in save block N" */
     ACNET_MSG_SLOT           = 21,/* S->C  acnet_slot_t: your slot is now N */
-    ACNET_MSG_WEATHER        = 22 /* C->S->C acnet_weather_t; relayed only from the world authority */
+    ACNET_MSG_WEATHER        = 22,/* C->S->C acnet_weather_t; relayed only from the world authority */
+    ACNET_MSG_NPC_STATE      = 23 /* C->S->C acnet_npc_hdr_t + count * acnet_npc_state_t (channel 1) */
 };
 
 enum acnet_reject_reason {
@@ -216,6 +217,31 @@ typedef struct ACNET_PACKED {
  * authority's game is the one that rolls, it sends what it has whenever it
  * changes (and every few seconds regardless), the server relays it only when
  * it really came from the authority, and the other games switch to it. */
+/* Villagers (step 3). Every game runs its own villager AI, so without help
+ * each resident sees the villagers somewhere else. Instead each villager has
+ * exactly one owner at a time -- the resident talking to it, else the
+ * connected game with the lowest client id among those that have its acre
+ * loaded -- computed by every game from the same streamed player positions.
+ * The owner runs the villager's real AI and streams where it is and whether
+ * it is walking, ten times a second; the other games stop that villager's
+ * own decision-making and walk their copy to the streamed spot with the
+ * villager's own walk act, so it animates properly and avoids obstacles.
+ * The server stamps client_id. Unreliable, like player state. */
+#define ACNET_NPC_MAX 24
+typedef struct ACNET_PACKED {
+    uint8_t client_id;    /* filled in by the server */
+    uint8_t count;        /* 1..ACNET_NPC_MAX states follow */
+    uint8_t reserved[2];
+} acnet_npc_hdr_t;
+
+typedef struct ACNET_PACKED {
+    uint16_t npc_id;      /* the villager (mActor_name_t), unique in a town */
+    int16_t  angle_y;
+    float    x, y, z;
+    uint8_t  walking;
+    uint8_t  reserved[3];
+} acnet_npc_state_t;
+
 #define ACNET_GROW_TIME_SIZE 16
 typedef struct ACNET_PACKED {
     int16_t type;         /* mEnv_WEATHER_* (0..15) */
@@ -334,6 +360,8 @@ typedef struct ACNET_PACKED {
     uint16_t item;
     uint8_t  emote;
     uint8_t  reserved;
+    uint16_t talk_npc;        /* npc_id of the villager this player is talking to, 0 if none */
+    uint8_t  reserved2[2];
 } acnet_player_state_t;
 
 #define ACNET_STATE_FLAG_BEE_SWELL 0x01 /* face swollen by a bee sting; live state, not in the save */

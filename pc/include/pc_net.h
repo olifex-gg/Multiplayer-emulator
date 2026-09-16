@@ -86,6 +86,16 @@ int  pc_net_take_land_cells(acnet_land_cell_t* out, int max);
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len);
 
+/* ----- Step 3: villagers ------------------------------------------------ *
+ * This client's id as the server knows it (what NPC states are stamped
+ * with, and what decides ownership ties), or -1 when not connected. */
+int pc_net_self_id(void);
+/* Stream the villagers this game owns (up to ACNET_NPC_MAX per call). */
+void pc_net_send_npc_states(const acnet_npc_state_t* states, int count);
+/* Latest streamed state of villager npc_id and who sent it: 1 if one arrived
+ * within the last few seconds, else 0. */
+int  pc_net_get_npc_state(unsigned npc_id, acnet_npc_state_t* out, int* from_client);
+
 /* ----- Step 3: shared weather ------------------------------------------- *
  * 1 when this client is the world authority (the oldest connected game). */
 int pc_net_is_authority(void);

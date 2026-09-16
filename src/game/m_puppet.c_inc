@@ -31,6 +31,8 @@
 #include "m_private.h"
 #include "m_scene_table.h"
 #include "ac_weather.h"
+#include "ac_npc.h"
+#include "m_demo.h"
 #include <stddef.h>
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
@@ -464,6 +466,122 @@ ACTOR_PROFILE Puppet_Profile = {
     NULL,
 };
 
+/* --- Villagers -------------------------------------------------------------
+ * See acnet_npc_state_t in protocol.h. Every game computes the same owner for
+ * a villager from the same streamed positions; the owner streams it, the
+ * others make their copy follow (aNPC_remote_control in ac_npc_move.c_inc). */
+static int Puppet_blocks_adjacent(const xyz_t* a, const xyz_t* b) {
+    int ax = (int)(a->x / mFI_BK_WORLDSIZE_BASE_F), az = (int)(a->z / mFI_BK_WORLDSIZE_BASE_F);
+    int bx = (int)(b->x / mFI_BK_WORLDSIZE_BASE_F), bz = (int)(b->z / mFI_BK_WORLDSIZE_BASE_F);
+    int dx = ax - bx, dz = az - bz;
+
+    if (dx < 0) dx = -dx;
+    if (dz < 0) dz = -dz;
+    return dx <= 1 && dz <= 1; /* the 3x3 of acres a game keeps loaded around its player */
+}
+
+/* Who runs this villager: the resident talking to it, else the connected game
+ * with the lowest client id among those that have its acre loaded. -1 when
+ * nobody near it is connected (then everyone just runs their own copy). */
+static int Puppet_npc_owner(GAME_PLAY* play, ACTOR* npc) {
+    ACTOR* me = GET_PLAYER_ACTOR_ACTOR(play);
+    ACTOR* talk = mDemo_Get_talk_actor();
+    int self = pc_net_self_id();
+    int local_slot = pc_net_local_slot();
+    int best = -1;
+    int slot;
+
+    if (self < 0 || me == NULL) {
+        return -1;
+    }
+    if (talk == npc) {
+        return self;
+    }
+    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
+        acnet_player_state_t st;
+        if (slot == local_slot || !pc_net_get_remote_state(slot, &st) || st.area != Puppet_area(play)) {
+            continue;
+        }
+        if (st.talk_npc != 0 && st.talk_npc == (uint16_t)npc->npc_id) {
+            return st.client_id;
+        }
+    }
+    if (Puppet_blocks_adjacent(&me->world.position, &npc->world.position)) {
+        best = self;
+    }
+    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
+        acnet_player_state_t st;
+        xyz_t p;
+        if (slot == local_slot || !pc_net_get_remote_state(slot, &st) || st.area != Puppet_area(play)) {
+            continue;
+        }
+        p.x = st.x;
+        p.y = st.y;
+        p.z = st.z;
+        if (Puppet_blocks_adjacent(&p, &npc->world.position) && (best < 0 || (int)st.client_id < best)) {
+            best = st.client_id;
+        }
+    }
+    return best;
+}
+
+int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking) {
+    GAME_PLAY* play = (GAME_PLAY*)gamePT;
+    acnet_npc_state_t st;
+    int from, owner;
+    int self = pc_net_self_id();
+
+    if (self < 0 || !pc_net_puppets_enabled() || play == NULL || !Puppet_in_town(play) ||
+        play->scene_id != SCENE_FG) {
+        return 0;
+    }
+    owner = Puppet_npc_owner(play, npc);
+    if (owner < 0 || owner == self) {
+        return 0;
+    }
+    if (!pc_net_get_npc_state((unsigned)(uint16_t)npc->npc_id, &st, &from) || from != owner) {
+        return 0; /* the owner has not told us yet: keep our own AI going meanwhile */
+    }
+    *x = st.x;
+    *y = st.y;
+    *z = st.z;
+    *angle_y = st.angle_y;
+    *walking = st.walking;
+    return 1;
+}
+
+/* Stream the villagers we own, ten times a second. */
+static void Puppet_npc_stream(GAME_PLAY* play) {
+    acnet_npc_state_t batch[ACNET_NPC_MAX];
+    int self = pc_net_self_id();
+    int n = 0;
+    ACTOR* a;
+
+    if (self < 0 || play->scene_id != SCENE_FG || (play->game_frame % 6) != 0) {
+        return;
+    }
+    for (a = play->actor_info.list[ACTOR_PART_NPC].actor; a != NULL && n < ACNET_NPC_MAX; a = a->next_actor) {
+        NPC_ACTOR* npc = (NPC_ACTOR*)a; /* every actor in this part is an NPC_ACTOR */
+        if (a->id != mAc_PROFILE_NORMAL_NPC || npc->condition_info.hide_flg) {
+            continue;
+        }
+        if (Puppet_npc_owner(play, a) != self) {
+            continue;
+        }
+        memset(&batch[n], 0, sizeof(batch[n]));
+        batch[n].npc_id = (uint16_t)a->npc_id;
+        batch[n].angle_y = (int16_t)a->shape_info.rotation.y;
+        batch[n].x = a->world.position.x;
+        batch[n].y = a->world.position.y;
+        batch[n].z = a->world.position.z;
+        batch[n].walking = a->speed > 0.01f ? 1 : 0;
+        n++;
+    }
+    if (n > 0) {
+        pc_net_send_npc_states(batch, n);
+    }
+}
+
 /* --- Land relay ------------------------------------------------------------
  * The town's field-item table (Save_t.fg) is both the persistent and the live
  * land: the loaded acres' item pointers alias it. So every change to the
@@ -622,6 +740,10 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         st.anim_speed = lp->keyframe0.frame_control.speed;
         st.item = (uint16_t)(u8)lp->item_kind;
         st.flags = Common_Get(player_bee_swell_flag) ? ACNET_STATE_FLAG_BEE_SWELL : 0;
+        {
+            ACTOR* talk = mDemo_Get_talk_actor();
+            st.talk_npc = (talk != NULL && talk->part == ACTOR_PART_NPC) ? (uint16_t)talk->npc_id : 0;
+        }
         pc_net_send_player_state(&st);
     }
 
@@ -678,6 +800,9 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     if (!pc_net_puppets_enabled() || !Puppet_in_town(play)) {
         return; /* other residents not drawn (or not in town yet); town sync is unaffected */
     }
+
+    /* 1e. Villagers: stream the ones we own. */
+    Puppet_npc_stream(play);
 
     /* 2. Update existing puppets from network state, deleting those whose
      *    resident has gone (or whose body no longer matches their block).

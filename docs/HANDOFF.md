@@ -14,7 +14,7 @@ land renewal come from the world authority; and the land relay no longer corrupt
 stored town (a real, crash-causing bug found tonight, below). The build is in the user's
 game folder; **both players need the new `AnimalCrossing.exe` and
 `AnimalCrossingOnline.exe`** (protocol version 2; old copies are refused by the new
-server). Next up: villagers in the same places for everyone.
+server). Villagers now stand in the same places for everyone too (below).
 
 ## Where things actually stand
 
@@ -44,9 +44,9 @@ Two people on two PCs, in different houses, have played in the same town. That m
   frame, relayed, and written into the stored town. Seen flowing both ways between two
   real games on 2026-09-15; the placeholder bug it had (below) is fixed.
 
-**Not started:** villagers in the same places for everyone (acre ownership), chat through
-the game's text entry, the shared town clock, held items on puppets, and more than four
-residents.
+**Not started:** villager actions beyond walking/standing (sitting, fishing, going indoors
+are not mirrored), chat through the game's text entry, the shared town clock, held items
+on puppets, and more than four residents.
 
 ## The puppet crash: fixed 2026-09-14, awaiting a playtest
 
@@ -153,6 +153,27 @@ updating, state sending, the claim and the land relay are all gated on `Puppet_i
 *Stale sessions:* the server replaces a logged-in client that has sent nothing for 5 s
 when the same resident logs in again (e2e check 20; `acnet_cli --vanish` simulates a
 crash). e2e 18 covers the weather relay, 19 the placeholder filter.
+
+**Villagers (2026-09-15 night).** `Puppet_npc_owner` in `m_puppet.c_inc` decides the
+owner (talker, else lowest client id among games whose player is within one acre of the
+villager, using `mFI_BK_WORLDSIZE_BASE_F` blocks); `Puppet_npc_stream` sends the owned
+villagers' `npc_id`/position/facing/`speed > 0` every 6th frame; `Puppet_npc_remote` is
+what a villager asks each frame. `aNPC_remote_control` in `ac_npc_move.c_inc` (under
+`TARGET_PC`, called at the top of `aNPC_actor_move_show`) makes a following copy skip
+`aNPC_schedule_proc` and instead requests `aNPC_ACT_WALK` with `aNPC_ACT_TYPE_TO_POINT`
+(`args[2]/[3]` = target x/z as u16, `args[5]` = arrival radius squared) while the owner's
+copy walks or the target is more than 12 units off, else `aNPC_ACT_WAIT` and a slow turn to
+the owner's facing; a copy more than 300 units off is moved outright. Re-requesting the
+walk every frame is fine: `aNPC_chk_request_act` re-runs the act's CHG_DATA (new target)
+and only re-INITs when the act index changes. Priority 3 sits above wandering (1-2) and
+below talk/forced acts (4), and the talk area/greeting code still runs, so talking to a
+followed villager works and makes the talker its owner (`talk_npc` in the player state).
+Logs: `[npc] villager XXXX now follows another resident's game` / `is back under this
+game's control`, every 3 s `follows: at .. owner says .. off by ..`, and `is N units from
+where its owner has it; moving it there`. Seen in the rig: Alana's copy of `e02a` was 400
+units off, got moved, then tracked within 19-47 units while walking (thresholds since
+tightened to 12/6). Not mirrored yet: what the owner's villager is *doing* (sitting,
+fishing, entering a house); a copy that is not loaded on the follower is simply absent.
 
 **The land relay placeholder bug (found and fixed 2026-09-15).** Alana's copy crashed the
 instant it entered the town: offset inside `mAGrw_RenewalFgItem_ovl` after

@@ -152,6 +152,19 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         printf("WEATHER type=%d intensity=%d\n", w.type, w.intensity);
         break;
     }
+    case ACNET_MSG_NPC_STATE: {
+        acnet_npc_hdr_t h;
+        int i;
+        if (payload_len < sizeof(h)) return 0;
+        memcpy(&h, payload, sizeof(h));
+        for (i = 0; i < h.count && sizeof(h) + (i + 1) * sizeof(acnet_npc_state_t) <= payload_len; i++) {
+            acnet_npc_state_t s;
+            memcpy(&s, payload + sizeof(h) + i * sizeof(s), sizeof(s));
+            printf("NPC client_id=%u npc=%u pos=%.1f,%.1f,%.1f angle=%d walking=%u\n", h.client_id, s.npc_id, s.x, s.y,
+                   s.z, s.angle_y, s.walking);
+        }
+        break;
+    }
     case ACNET_MSG_CHAT: {
         acnet_chat_t m;
         if (payload_len != sizeof(m)) return 0;
@@ -267,6 +280,7 @@ static void usage(void) {
             "       ... --claim N          say our character is in save block N; prints the slot we end up in\n"
             "       ... --weather T,I      send the town weather (type, intensity); with --wait, once a second\n"
             "       ... --vanish           exit without saying goodbye (a crashed game), after everything else\n"
+            "       ... --npc ID,X,Z        send one villager state (we own villager ID at X,Z)\n"
             "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
             "                              so a running game keeps drawing this fake resident\n"
             "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
@@ -289,6 +303,7 @@ int main(int argc, char** argv) {
     const char* weather = NULL;
     acnet_weather_t wx;
     int vanish = 0;
+    const char* npc = NULL;
     acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -315,6 +330,7 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--claim") == 0 && v) { claim = atoi(v); i++; }
         else if (strcmp(a, "--weather") == 0 && v) { weather = v; i++; }
         else if (strcmp(a, "--vanish") == 0) { vanish = 1; }
+        else if (strcmp(a, "--npc") == 0 && v) { npc = v; i++; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -380,6 +396,16 @@ int main(int argc, char** argv) {
         send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_CLAIM_SLOT, &q, sizeof(q), NULL, 0, 1);
         rc = wait_for(host, peer, ACNET_MSG_SLOT, 5000, NULL);
         if (rc <= 0) { exit_code = 3; goto done; }
+    }
+    if (npc) {
+        struct { acnet_npc_hdr_t h; acnet_npc_state_t s; } ACNET_PACKED pk;
+        int id = 0;
+        memset(&pk, 0, sizeof(pk));
+        sscanf(npc, "%d,%f,%f", &id, &pk.s.x, &pk.s.z);
+        pk.h.count = 1;
+        pk.s.npc_id = (uint16_t)id;
+        send_msg(peer, ACNET_CH_STATE, ACNET_MSG_NPC_STATE, &pk, sizeof(pk), NULL, 0, 0);
+        enet_host_flush(host);
     }
     memset(&wx, 0, sizeof(wx));
     if (weather) {

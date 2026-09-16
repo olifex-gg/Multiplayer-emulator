@@ -693,9 +693,77 @@ static void aNPC_actor_move_show_after(ACTOR* actorx, GAME* game) {
     }
 }
 
+#ifdef TARGET_PC
+/* Multiplayer fork: when another resident's game owns this villager (see
+ * Puppet_npc_remote), skip its own decision-making and walk the copy to where
+ * the owner says it is, using the villager's normal walk act so it animates
+ * and avoids obstacles like any other walk. Far off: put it there. Standing:
+ * wait and turn to the owner's facing. The talk/greeting code still runs, so a
+ * local conversation with it works (and makes us its owner for the duration). */
+static int aNPC_remote_control(NPC_ACTOR* nactorx, GAME_PLAY* play) {
+    static struct { u16 npc_id; u8 remote; } seen[32];
+    ACTOR* actorx = &nactorx->actor_class;
+    float x, y, z;
+    int angle, walking, i, idx = -1;
+    int remote = Puppet_npc_remote(actorx, &x, &y, &z, &angle, &walking);
+    u16 args[aNPC_REQUEST_ARG_NUM];
+    f32 dx, dz, dist2;
+
+    for (i = 0; i < 32; i++) {
+        if (seen[i].npc_id == actorx->npc_id) { idx = i; break; }
+    }
+    if (idx < 0) {
+        for (i = 0; i < 32; i++) {
+            if (seen[i].npc_id == 0) { idx = i; seen[i].npc_id = actorx->npc_id; seen[i].remote = 0; break; }
+        }
+    }
+    if (idx >= 0 && seen[idx].remote != (u8)remote) {
+        seen[idx].remote = (u8)remote;
+        OSReport("[npc] villager %04x %s\n", (unsigned)actorx->npc_id,
+                 remote ? "now follows another resident's game" : "is back under this game's control");
+    }
+    if (!remote) {
+        return FALSE;
+    }
+
+    dx = x - actorx->world.position.x;
+    dz = z - actorx->world.position.z;
+    dist2 = dx * dx + dz * dz;
+    if ((play->game_frame % 180) == 0) { /* every 3 s: how well the copy keeps up */
+        OSReport("[npc] villager %04x follows: at %.0f,%.0f  owner says %.0f,%.0f%s  off by %.0f\n",
+                 (unsigned)actorx->npc_id, actorx->world.position.x, actorx->world.position.z, x, z,
+                 walking ? " (walking)" : "", sqrtf(dist2));
+    }
+    if (dist2 > 300.0f * 300.0f) {
+        OSReport("[npc] villager %04x is %.0f units from where its owner has it; moving it there\n",
+                 (unsigned)actorx->npc_id, sqrtf(dist2));
+        actorx->world.position.x = x;
+        actorx->world.position.z = z;
+        actorx->shape_info.rotation.y = (s16)angle;
+        actorx->world.angle.y = (s16)angle;
+        dist2 = 0.0f;
+    }
+
+    bzero(args, sizeof(args));
+    if (walking || dist2 > 12.0f * 12.0f) {
+        args[2] = (u16)(x < 0.0f ? 0.0f : x);
+        args[3] = (u16)(z < 0.0f ? 0.0f : z);
+        args[5] = 36; /* arrival radius, squared: within 6 units */
+        aNPC_set_request_act(nactorx, 3, aNPC_ACT_WALK, aNPC_ACT_TYPE_TO_POINT, args);
+    } else {
+        aNPC_set_request_act(nactorx, 3, aNPC_ACT_WAIT, aNPC_ACT_TYPE_DEFAULT, args);
+        chase_angle(&actorx->shape_info.rotation.y, (s16)angle, 0x300);
+    }
+    return TRUE;
+}
+#endif
+
 static void aNPC_actor_move_show(ACTOR* actorx, GAME* game) {
     NPC_ACTOR* nactorx = (NPC_ACTOR*)actorx;
     GAME_PLAY* play = (GAME_PLAY*)game;
+#ifdef TARGET_PC
+    int remote = aNPC_remote_control(nactorx, play);
+#endif
 
     aNPC_set_over_friendship(nactorx);
     aNPC_actor_move_show_before(actorx, game);
@@ -706,6 +774,9 @@ static void aNPC_actor_move_show(ACTOR* actorx, GAME* game) {
         aNPC_talk_area_check(nactorx, play);
     }
 
+#ifdef TARGET_PC
+    if (!remote)
+#endif
     aNPC_schedule_proc(nactorx, play);
     aNPC_action_proc(nactorx, play);
     aNPC_talk_request_check(actorx, game);

@@ -256,10 +256,23 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   game died silently can log in again after 5 s of silence instead of waiting out ENet's
   timeout.
 
-What is **not** there yet: villagers in the same places for everyone (each game still
-runs its own villager AI; acre ownership is next), held items on puppets, chat (counted
-but not rendered), and a house index in `area` (two residents inside different houses of
-the same size still count as the same place).
+- **Villagers, first slice (step 3, acre ownership).** Each villager has exactly one
+  owner: the resident talking to it, else the connected game with the lowest client id
+  among those that have its acre loaded (the 3x3 of acres around each player), computed
+  by every game from the same streamed player positions. The owner runs the villager's
+  real AI and streams its position, facing and walking flag ten times a second
+  (`ACNET_MSG_NPC_STATE`, stamped by the server); the other games skip that villager's
+  own decision-making and give their copy walk-to-point / wait requests through its
+  normal act system, so it animates and avoids obstacles, snapping only when hundreds of
+  units off. Confirmed with two games: a copy that had wandered 400 units away was
+  brought over and then tracked its owner within a tile. Still missing: villagers'
+  *actions* beyond walking and standing (an owner's villager sitting, fishing, going
+  indoors) are not mirrored yet, and a copy that never had the villager loaded does not
+  spawn it.
+
+What is **not** there yet: villager actions beyond walk/stand, held items on puppets, chat
+(counted but not rendered), and a house index in `area` (two residents inside different
+houses of the same size still count as the same place).
 
 ### Not doing (and why)
 

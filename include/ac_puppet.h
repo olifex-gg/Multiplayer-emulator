@@ -18,4 +18,10 @@ extern ACTOR_PROFILE Puppet_Profile;
  * other residents. A no-op when multiplayer is not connected. */
 extern void Puppet_net_update_local(ACTOR* player_actor, GAME* game);
 
+/* Villager sync. Asked by a villager every frame: 1 if another resident's game
+ * owns this villager right now and has told us where it is (position, facing,
+ * whether it is walking); the villager then follows that instead of its own
+ * decisions. 0: run the normal AI (we own it, or nobody does). */
+extern int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking);
+
 #endif /* AC_PUPPET_H */

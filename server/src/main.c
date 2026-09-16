@@ -614,6 +614,19 @@ static void handle_weather(client_t* c, const uint8_t* payload, size_t len) {
     room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &w, sizeof(w), 1);
 }
 
+/* Villager states: stamp the sender and relay, unreliable, like player state. */
+static void handle_npc_state(client_t* c, const uint8_t* payload, size_t len) {
+    acnet_npc_hdr_t h;
+    uint8_t buf[sizeof(acnet_npc_hdr_t) + ACNET_NPC_MAX * sizeof(acnet_npc_state_t)];
+    if (!c->logged_in || len < sizeof(h)) return;
+    memcpy(&h, payload, sizeof(h));
+    if (h.count == 0 || h.count > ACNET_NPC_MAX || len != sizeof(h) + (size_t)h.count * sizeof(acnet_npc_state_t)) return;
+    h.client_id = (uint8_t)c->id;
+    memcpy(buf, &h, sizeof(h));
+    memcpy(buf + sizeof(h), payload + sizeof(h), len - sizeof(h));
+    room_broadcast(c->room, c, ACNET_CH_STATE, ACNET_MSG_NPC_STATE, buf, len, 0);
+}
+
 static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     acnet_ping_t p;
     acnet_pong_t r;
@@ -700,6 +713,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_LAND_CELLS:   handle_land_cells(c, payload, payload_len); break;
     case ACNET_MSG_CLAIM_SLOT:   handle_claim_slot(c, payload, payload_len); break;
     case ACNET_MSG_WEATHER:      handle_weather(c, payload, payload_len); break;
+    case ACNET_MSG_NPC_STATE:    handle_npc_state(c, payload, payload_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;

@@ -117,6 +117,41 @@ static chat_inbox_t s_chat_inbox;
 /* A remote resident is considered gone if silent this long. */
 #define REMOTE_TIMEOUT_MS 3000
 
+/* Villagers streamed by their owners, keyed by npc_id. */
+#define NPC_TABLE_SIZE 64
+typedef struct {
+    int                active;
+    uint8_t            client_id;
+    uint32_t           recv_ms;
+    acnet_npc_state_t  st;
+} remote_npc_t;
+static remote_npc_t s_npc[NPC_TABLE_SIZE];
+static unsigned     s_npc_tx, s_npc_rx;
+
+static void npc_apply_states(uint8_t client_id, const uint8_t* data, int count) {
+    uint32_t now = enet_time_get();
+    int i, k;
+    for (k = 0; k < count; k++) {
+        acnet_npc_state_t st;
+        remote_npc_t* slot = NULL;
+        memcpy(&st, data + (size_t)k * sizeof(st), sizeof(st));
+        for (i = 0; i < NPC_TABLE_SIZE; i++) {
+            if (s_npc[i].active && s_npc[i].st.npc_id == st.npc_id) { slot = &s_npc[i]; break; }
+        }
+        if (!slot) {
+            for (i = 0; i < NPC_TABLE_SIZE; i++) {
+                if (!s_npc[i].active) { slot = &s_npc[i]; break; }
+            }
+        }
+        if (!slot) continue;
+        slot->active = 1;
+        slot->client_id = client_id;
+        slot->recv_ms = now;
+        slot->st = st;
+        s_npc_rx++;
+    }
+}
+
 static void remote_apply_state(const acnet_player_state_t* s) {
     remote_resident_t* r;
     if (s->slot >= ACNET_MAX_PLAYERS) return;
@@ -137,6 +172,11 @@ static void remote_expire(void) {
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
         if (s_remote[i].active && now - s_remote[i].recv_ms > REMOTE_TIMEOUT_MS) {
             s_remote[i].active = 0;
+        }
+    }
+    for (i = 0; i < NPC_TABLE_SIZE; i++) {
+        if (s_npc[i].active && now - s_npc[i].recv_ms > REMOTE_TIMEOUT_MS) {
+            s_npc[i].active = 0;
         }
     }
 }
@@ -461,6 +501,16 @@ static int pump_until(uint8_t want, uint32_t timeout_ms) {
                             s_puppet_rx++;
                         }
                         t = hdr.type;
+                    } else if (hdr.type == ACNET_MSG_NPC_STATE) {
+                        acnet_npc_hdr_t h;
+                        if (payload_len >= sizeof(h)) {
+                            memcpy(&h, payload, sizeof(h));
+                            if (h.count > 0 && h.count <= ACNET_NPC_MAX &&
+                                payload_len == sizeof(h) + (size_t)h.count * sizeof(acnet_npc_state_t)) {
+                                npc_apply_states(h.client_id, payload + sizeof(h), h.count);
+                            }
+                        }
+                        t = hdr.type;
                     } else if (hdr.type == ACNET_MSG_CHAT) {
                         if (payload_len == sizeof(acnet_chat_t)) {
                             acnet_chat_t m;
@@ -601,9 +651,9 @@ void pc_net_service(void) {
     if (now - last_report >= 5000) {
         int i, n = 0;
         for (i = 0; i < ACNET_MAX_PLAYERS; i++) n += s_remote[i].active ? 1 : 0;
-        OSReport("[net] state sent=%u received=%u residents-visible=%d land-cells sent=%u received=%u%s rtt=%ums\n",
+        OSReport("[net] state sent=%u received=%u residents-visible=%d land-cells sent=%u received=%u%s villagers sent=%u received=%u rtt=%ums\n",
                  s_puppet_tx, s_puppet_rx, n, s_land_tx, s_land_rx, s_land_dropped ? " (some dropped!)" : "",
-                 s_peer ? s_peer->roundTripTime : 0u);
+                 s_npc_tx, s_npc_rx, s_peer ? s_peer->roundTripTime : 0u);
         last_report = now;
     }
 }
@@ -630,6 +680,35 @@ void pc_net_send_player_state(const acnet_player_state_t* state) {
 }
 
 int pc_net_local_slot(void) { return s_active ? s_slot : -1; }
+
+int pc_net_self_id(void) { return s_active ? s_self_id : -1; }
+
+void pc_net_send_npc_states(const acnet_npc_state_t* states, int count) {
+    uint8_t buf[sizeof(acnet_npc_hdr_t) + ACNET_NPC_MAX * sizeof(acnet_npc_state_t)];
+    acnet_npc_hdr_t h;
+    if (!s_active || count <= 0) return;
+    if (count > ACNET_NPC_MAX) count = ACNET_NPC_MAX;
+    memset(&h, 0, sizeof(h));
+    h.client_id = (uint8_t)s_self_id;
+    h.count = (uint8_t)count;
+    memcpy(buf, &h, sizeof(h));
+    memcpy(buf + sizeof(h), states, (size_t)count * sizeof(*states));
+    send_msg(ACNET_CH_STATE, ACNET_MSG_NPC_STATE, buf, sizeof(h) + (size_t)count * sizeof(*states), NULL, 0, 0);
+    s_npc_tx += (unsigned)count;
+}
+
+int pc_net_get_npc_state(unsigned npc_id, acnet_npc_state_t* out, int* from_client) {
+    int i;
+    if (!s_active) return 0;
+    for (i = 0; i < NPC_TABLE_SIZE; i++) {
+        if (s_npc[i].active && s_npc[i].st.npc_id == npc_id) {
+            if (out) *out = s_npc[i].st;
+            if (from_client) *from_client = s_npc[i].client_id;
+            return 1;
+        }
+    }
+    return 0;
+}
 
 /* ----- weather ----- */
 
