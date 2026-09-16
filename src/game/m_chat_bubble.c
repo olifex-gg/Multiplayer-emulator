@@ -25,7 +25,7 @@
 #include <string.h>
 
 #define mCB_QUEUE     8
-#define mCB_TEXT_MAX  96
+#define mCB_TEXT_MAX  ACNET_CHAT_LEN
 /* Line width limit in mFont_GetStringWidth units. Those are about 2.6 times
  * the pixels the window's text is drawn at (measured on screen: 17 narrow
  * characters were 210 units and 80 px). 500 ran a hair past the window's

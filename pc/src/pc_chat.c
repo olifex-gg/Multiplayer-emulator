@@ -201,10 +201,18 @@ void pc_chat_draw(struct game_s* game) {
     {
         char line[ACNET_CHAT_LEN + 8];
         f32 y = 240.0f - 18.0f;
-        snprintf(line, sizeof(line), "> %s%s", s_input, ((SDL_GetTicks() / 400) & 1) ? "_" : " ");
+        const char* shown = s_input;
+        /* A long line scrolls: only its tail fits the bar. */
+        if (s_input_len > 62) {
+            shown = s_input + (s_input_len - 62);
+        }
+        snprintf(line, sizeof(line), "> %s%s%s", shown == s_input ? "" : "...", shown,
+                 ((SDL_GetTicks() / 400) & 1) ? "_" : " ");
         chat_rect(graph, 2.0f, y - 3.0f, 318.0f, y + CHAT_LINE_H + 2.0f, 150);
         pc_text_draw(game, line, 6.0f, y, 255, 240, 170, 255, CHAT_SCALE);
-        pc_text_draw(game, "Enter: send   Esc: cancel", 200.0f, y, 170, 170, 170, 255, 0.6f);
+        if (s_input_len < 40) { /* the hint would sit on top of a long line */
+            pc_text_draw(game, "Enter: send   Esc: cancel", 200.0f, y, 170, 170, 170, 255, 0.6f);
+        }
     }
     mFont_UnSetMatrix(graph, mFont_MODE_FONT);
 }

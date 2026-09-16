@@ -231,8 +231,11 @@ clears the hooks when the window hides or a villager takes it (the loader stamps
 `msg_no`, so a takeover is visible). A window opened this way does not freeze the
 player: only `mDemo` does that, and chat never goes through it. Everything with no
 speaker actor was checked NULL-safe (name lookups, voice spec, sound spec: the voice
-becomes the generic animalese spec 2, so the words are "spoken"). The clock (`m_banti.c`) fades while any message window is up, as it does for a conversation. Queue of 8; a message
-waits while a villager conversation or any demo is running.
+becomes the generic animalese spec 2, so the words are "spoken"). The clock (`m_banti.c`) fades while any message window is up, as it does for a conversation. Queue of 8; a message waits while a villager conversation or any demo is running.
+Lines are up to `ACNET_CHAT_LEN` = 200 characters (protocol version 6; the old 96 cut
+the last letter off a 97-character test message): a 178-character message filled one
+four-line window and finished in a second one-line window. The typing bar in `pc_chat.c`
+scrolls to show the tail of a long line and drops its key hint past 40 characters.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

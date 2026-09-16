@@ -18,14 +18,14 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 5 /* 5: one-shot vs looping animations, the item shown during a pick-up */
+#define ACNET_PROTOCOL_VERSION 6 /* 6: chat lines up to 200 characters */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
 #define ACNET_MAX_CLIENTS 8     /* connections, including ones still logging in */
 #define ACNET_NAME_LEN    16    /* resident login name, NUL padded */
 #define ACNET_INVITE_LEN  32    /* invite code, NUL padded */
-#define ACNET_CHAT_LEN    96
+#define ACNET_CHAT_LEN    200   /* a chat line; the speech window pages anything over four lines */
 #define ACNET_SLOT_ANY    0xFF
 
 /* ENet channels */
