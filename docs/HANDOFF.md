@@ -355,8 +355,14 @@ in-game side. The recipe that confirmed the puppet fix:
    sideways off terrain (a river bend near Alana's spawn) and never touch the target.
    `acnet_cli --name Carol --area 9 ...` is a resident indoors; `--area 7` outdoors.
    `--item N` puts a tool in the fake resident's hand (1 axe, 10 net, 12 umbrella, 52
-   rod: the item kind + 1). `--push TOWN.gci` pushes the CLI's own blocks out of a town
-   file without saving. To chat from a driven game: `gamekeys.ps1 ptap T`, then
+   rod, 54 shovel: the item kind + 1). **Pair it with the tool's holding pose** via
+   `--anim`: 2 axe, 29 net, 18 umbrella, 67 rod, 83 shovel (`mPlayer_ANIM_*1`). A real
+   player is always in that pose while holding the tool; a stand-in left in the plain
+   standing pose (anim 0) holds the tool with the hand hanging down, so the net and the
+   umbrella point at the ground and look wrong, which is not a drawing bug. Also put the
+   stand-in on open ground: it has no physics of its own, so at coordinates inside the
+   gyroid it stands inside the gyroid. `--push TOWN.gci` pushes the CLI's own blocks out
+   of a town file without saving. To chat from a driven game: `gamekeys.ps1 ptap T`, then
    `ptype "hello there"`, then `ptap Return`; the other game's `aclog.txt` gets a
    `[chat] Owen: hello there` line. Every new build of `AnimalCrossing.exe` must be copied
    into BOTH rigs before relaunching them.
