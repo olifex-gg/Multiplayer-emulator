@@ -6,6 +6,7 @@
 #   gamekeys.ps1 shot  <out.png>                   screenshot just the game window
 #   gamekeys.ps1 move  <x> <y> <w> <h>             move/resize the window (clear of other windows)
 #   gamekeys.ps1 focus                             try to bring the game to the front
+#   gamekeys.ps1 ptype <text>                      type text (letters, digits, spaces; posted), e.g. a chat line
 #   gamekeys.ps1 tap / hold                        like ptap/phold but via SendInput; needs focus
 #
 # ptap/phold post WM_KEYDOWN/WM_KEYUP straight to the game window, which SDL2 turns
@@ -36,6 +37,7 @@ public static class GK {
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
   public static void Post(IntPtr h, int vk, int scan, bool extended, bool up) {
     long l = 1 | ((long)scan << 16) | (extended ? (1L << 24) : 0);
     if (up) l |= (1L << 30) | (1L << 31);
@@ -55,10 +57,19 @@ if (-not ("GK" -as [type])) { Add-Type -TypeDefinition $sig }
 # otherwise disagree about where the window is.
 [GK]::SetProcessDPIAware() | Out-Null
 $scan = @{ Space=0x39; Return=0x1C; LShift=0x2A; X=0x2D; Y=0x15; Z=0x2C; Q=0x10; E=0x12; W=0x11; A=0x1E; S=0x1F; D=0x20;
-           I=0x17; J=0x24; K=0x25; L=0x26; Escape=0x01; Up=0x48; Down=0x50; Left=0x4B; Right=0x4D }
+           I=0x17; J=0x24; K=0x25; L=0x26; Escape=0x01; Up=0x48; Down=0x50; Left=0x4B; Right=0x4D; T=0x14; Back=0x0E }
 $ext = @{ Up=$true; Down=$true; Left=$true; Right=$true }
 $vk = @{ Space=0x20; Return=0x0D; LShift=0x10; X=0x58; Y=0x59; Z=0x5A; Q=0x51; E=0x45; W=0x57; A=0x41; S=0x53; D=0x44;
-         I=0x49; J=0x4A; K=0x4B; L=0x4C; Escape=0x1B; Up=0x26; Down=0x28; Left=0x25; Right=0x27 }
+         I=0x49; J=0x4A; K=0x4B; L=0x4C; Escape=0x1B; Up=0x26; Down=0x28; Left=0x25; Right=0x27; T=0x54; Back=0x08 }
+function PType([string]$text) {
+  $p = Get-Game; if (-not $p) { throw "game window not found" }
+  foreach ($ch in $text.ToCharArray()) {
+    $v = [int][char]::ToUpper($ch)            # letters, digits and space are their own virtual keys
+    $sc = [GK]::MapVirtualKey([uint32]$v, 0)
+    [GK]::Post($p.MainWindowHandle, $v, [int]$sc, $false, $false); Start-Sleep -Milliseconds 40
+    [GK]::Post($p.MainWindowHandle, $v, [int]$sc, $false, $true);  Start-Sleep -Milliseconds 60
+  }
+}
 function PTap([string]$k, [int]$hold, [int]$n, [int]$gap) {
   $p = Get-Game; if (-not $p) { throw "game window not found" }
   for ($i = 0; $i -lt $n; $i++) {
@@ -97,6 +108,7 @@ switch ($cmd) {
   'move'  { $p = Get-Game; [GK]::SetWindowPos($p.MainWindowHandle, [IntPtr]::Zero, [int]$a1, [int]$a2, [int]$a3, [int]$a4, 0x0040) | Out-Null; "moved to $a1,$a2 size $a3 x $a4" }
   'tap'   { Focus-Game | Out-Null; $h = if ($a2) { [int]$a2 } else { 80 }; $n = if ($a3) { [int]$a3 } else { 1 }; $g = if ($a4) { [int]$a4 } else { 250 }; Tap $a1 $h $n $g; "tapped $a1 x$n" }
   'ptap'  { $h = if ($a2) { [int]$a2 } else { 80 }; $n = if ($a3) { [int]$a3 } else { 1 }; $g = if ($a4) { [int]$a4 } else { 250 }; PTap $a1 $h $n $g; "posted $a1 x$n" }
+  'ptype' { PType $a1; "typed '$a1'" }
   'phold' { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $false); Start-Sleep -Milliseconds ([int]$a2); [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $true); "posted hold $a1 for $a2 ms" }
   'pdown' { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $false); "posted $a1 down" }
   'pup'   { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $true); "posted $a1 up" }

@@ -245,6 +245,50 @@ sleep 0.7
 cli --name bob --npc 4660,100,200 --wait 1 > "$TMP/bob_npc.txt"
 wait "$NPPID" || true
 bob_id=$(grep -o "WELCOME client_id=[0-9]*" "$TMP/bob_npc.txt" | grep -o "[0-9]*$")
-grep -q "NPC client_id=$bob_id npc=4660 pos=100.0,0.0,200.0 angle=0 walking=0" "$TMP/alice_npc.txt" || fail "alice got no villager state: $(cat "$TMP/alice_npc.txt")"
+grep -q "NPC client_id=$bob_id npc=4660 pos=100.0,0.0,200.0 angle=0 walking=0 act=255 flags=0" "$TMP/alice_npc.txt" || fail "alice got no villager state: $(cat "$TMP/alice_npc.txt")"
+
+echo "22. a villager's act and flags travel with it"
+cli --name alice --wait 3 > "$TMP/alice_npc2.txt" &
+NPPID=$!
+sleep 0.7
+cli --name bob --npc 4661,10,20,9,3 --wait 1 > /dev/null
+wait "$NPPID" || true
+grep -q "NPC client_id=[0-9]* npc=4661 pos=10.0,0.0,20.0 angle=0 walking=0 act=9 flags=3" "$TMP/alice_npc2.txt" || fail "act/flags lost: $(cat "$TMP/alice_npc2.txt")"
+
+echo "23. a resident can push their own blocks without saving; they are stored, protected and relayed"
+# bob is resident 2. Push blocks filled with 0xEE out of a crafted town; the
+# rest of that town must not matter.
+cp "$TMP/dl_bob.gci" "$TMP/townP.gci"
+$MK set "$TMP/townP.gci" 2 0xEE
+$MK set "$TMP/townP.gci" 0 0x11      # tampering with alice's block in the pushed file changes nothing
+cli --name alice --wait 3 > "$TMP/alice_push.txt" &
+PUPID=$!
+sleep 0.7
+out=$(cli --name bob --push "$TMP/townP.gci" --wait 1)
+grep -q "PUSHED slot=2" <<<"$out" || fail "push: $out"
+wait "$PUPID" || true
+grep -q "RESIDENT slot=2 version=[0-9]* bytes=$((0x2440 + 0x26B0))" "$TMP/alice_push.txt" || fail "alice did not get bob's pushed blocks: $(cat "$TMP/alice_push.txt")"
+sleep 1
+$MK check "$TMP/data/towns/$INVITE/town.gci" > "$TMP/check_push.txt"
+grep -q "^OK .*slot2=0xEE/0xEE" "$TMP/check_push.txt" || fail "pushed blocks not stored: $(cat "$TMP/check_push.txt")"
+grep -q "slot0=0xA0/0xB0" "$TMP/check_push.txt" || fail "a push must only touch the pusher's blocks: $(cat "$TMP/check_push.txt")"
+grep -q "^2 1 bob" "$TMP/data/towns/$INVITE/residents.txt" || fail "bob should count as saved after a push: $(cat "$TMP/data/towns/$INVITE/residents.txt")"
+# From now on nobody else's upload can overwrite block 2.
+cli --name alice --download "$TMP/townQ.gci" > /dev/null
+$MK set "$TMP/townQ.gci" 2 0x22
+sleep 2
+out=$(cli --name alice --upload "$TMP/townQ.gci")
+grep -q "ACK status=0" <<<"$out" || fail "alice's upload after the push: $out"
+$MK check "$TMP/data/towns/$INVITE/town.gci" | grep -q "slot2=0xEE/0xEE" || fail "an upload overwrote pushed blocks"
+# A push for somebody else's slot is ignored (the CLI can only push its own, so check the server log stays clean).
+! grep -q "ignoring blocks" "$TMP/server.log" || fail "unexpected foreign push"
+
+echo "24. the welcome carries the server's clock and time zone"
+out=$(cli --name carol --ping)
+grep -q "WELCOME .* server_ms=[0-9]* tz=-\?[0-9]*" <<<"$out" || fail "no clock in welcome: $out"
+grep -q "PONG nonce=12648430 server_ms=[0-9]* tz=-\?[0-9]*" <<<"$out" || fail "no clock in pong: $out"
+tz=$(grep -o "WELCOME .* tz=-\?[0-9]*" <<<"$out" | grep -o "[-0-9]*$")
+want=$(python3 -c "import time; print(-(time.altzone if time.localtime().tm_isdst > 0 else time.timezone) // 60)")
+[[ "$tz" == "$want" ]] || fail "server time zone $tz, this machine says $want"
 
 echo "ALL PASSED"

@@ -114,8 +114,23 @@ int  pc_net_take_weather(int* type, int* intensity, void* grow_renew_time_out, s
 void pc_net_send_chat(const char* text);
 /* Returns 1 and fills out_slot/out_text if a chat line is waiting, else 0. */
 int  pc_net_poll_chat(int* out_slot, char* out_text, int out_size);
-/* server_unix_ms - local time at login, for aligning the town clock. */
+/* The login name of the resident in `slot` ("" if none / not connected). */
+const char* pc_net_peer_name(int slot);
+/* How far the host's wall clock is ahead of this PC's, in ms (negative:
+ * behind), or 0 when not connected. The town has one clock, the host's:
+ * lb_rtc.c adds this to the hardware time on the PC build. Learned at
+ * login and refreshed by a ping every minute. */
 long long pc_net_server_clock_skew_ms(void);
+
+/* ----- Step 4: resident push -------------------------------------------- *
+ * Send our own character and house blocks (big-endian, as in the town blob)
+ * to the server without a save, so the others see a brand-new character,
+ * a new shirt or moved furniture at once. Cheap to call every frame: it
+ * hashes the blocks and only sends when they changed, at most once every
+ * 5 s. force sends even if unchanged (subject to the rate limit). Returns 1
+ * when a push went out. */
+int pc_net_push_own_blocks(const void* private_be, size_t private_len, const void* home_be, size_t home_len,
+                           int force);
 
 #ifdef __cplusplus
 }

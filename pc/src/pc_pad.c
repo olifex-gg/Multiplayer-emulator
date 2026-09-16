@@ -1,6 +1,7 @@
 /* pc_pad.c - GC controller input via SDL gamepad + keyboard */
 #include "pc_platform.h"
 #include "pc_typing.h"
+#include "pc_chat.h"
 #include "pc_keybindings.h"
 #include "pc_settings.h"
 #include <dolphin/pad.h>
@@ -60,8 +61,9 @@ u32 PADRead(PADStatus* status) {
     s8 stickX = 0, stickY = 0;
     s8 cstickX = 0, cstickY = 0;
 
-    /* Suppress keyboard-to-button mapping when typing into the in-game text editor */
-    if (!(g_pc_typing_mode && g_pc_editor_active)) {
+    /* Suppress keyboard-to-button mapping when typing into the in-game text
+     * editor or the multiplayer chat line */
+    if (!(g_pc_typing_mode && g_pc_editor_active) && !pc_chat_blocks_pad()) {
         /* helper: check if a PCInputCode is currently pressed */
         #define INPUT_PRESSED(code) \
             (((code) & PC_INPUT_MOUSE_BIT) \

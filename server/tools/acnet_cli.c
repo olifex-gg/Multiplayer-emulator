@@ -14,6 +14,7 @@
 #include "protocol.h"
 
 static int g_quiet;
+static int g_my_slot = -1; /* from WELCOME, for --push */
 
 static int send_msg(ENetPeer* peer, uint8_t channel, uint8_t type, const void* payload,
                     size_t payload_len, const void* blob, size_t blob_len, int reliable) {
@@ -74,9 +75,10 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         int i;
         if (payload_len != sizeof(w)) return 0;
         memcpy(&w, payload, sizeof(w));
-        printf("WELCOME client_id=%u slot=%u authority=%u town_present=%u version=%u peers=%u server_ms=%lld\n",
+        printf("WELCOME client_id=%u slot=%u authority=%u town_present=%u version=%u peers=%u server_ms=%lld tz=%d\n",
                w.client_id, w.slot, w.authority_client_id, w.town_present, w.town_version, w.peer_count,
-               (long long)w.server_unix_ms);
+               (long long)w.server_unix_ms, (int)w.server_tz_min);
+        g_my_slot = w.slot;
         for (i = 0; i < w.peer_count && i < ACNET_MAX_PLAYERS; i++) {
             printf("PEER client_id=%u slot=%u ", w.peers[i].client_id, w.peers[i].slot);
             print_name("name", w.peers[i].name);
@@ -160,8 +162,8 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         for (i = 0; i < h.count && sizeof(h) + (i + 1) * sizeof(acnet_npc_state_t) <= payload_len; i++) {
             acnet_npc_state_t s;
             memcpy(&s, payload + sizeof(h) + i * sizeof(s), sizeof(s));
-            printf("NPC client_id=%u npc=%u pos=%.1f,%.1f,%.1f angle=%d walking=%u\n", h.client_id, s.npc_id, s.x, s.y,
-                   s.z, s.angle_y, s.walking);
+            printf("NPC client_id=%u npc=%u pos=%.1f,%.1f,%.1f angle=%d walking=%u act=%u flags=%u\n", h.client_id,
+                   s.npc_id, s.x, s.y, s.z, s.angle_y, s.walking, s.act, s.flags);
         }
         break;
     }
@@ -177,7 +179,7 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         acnet_pong_t p;
         if (payload_len != sizeof(p)) return 0;
         memcpy(&p, payload, sizeof(p));
-        printf("PONG nonce=%u server_ms=%lld\n", p.nonce, (long long)p.server_unix_ms);
+        printf("PONG nonce=%u server_ms=%lld tz=%d\n", p.nonce, (long long)p.server_unix_ms, (int)p.server_tz_min);
         break;
     }
     case ACNET_MSG_LAND_CELLS: {
@@ -205,9 +207,9 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         acnet_player_state_t s;
         if (payload_len != sizeof(s)) return 0;
         memcpy(&s, payload, sizeof(s));
-        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f anim=%d/%d part=%d frame=%.1f/%.1f speed=%.2f flags=%u\n",
+        printf("STATE client_id=%u slot=%u seq=%u area=%u pos=%.1f,%.1f,%.1f anim=%d/%d part=%d frame=%.1f/%.1f speed=%.2f flags=%u item=%u talk=%u\n",
                s.client_id, s.slot, s.seq, s.area, s.x, s.y, s.z, s.anim0_idx, s.anim1_idx, s.part_table_idx,
-               s.anim0_frame, s.anim1_frame, s.anim_speed, s.flags);
+               s.anim0_frame, s.anim1_frame, s.anim_speed, s.flags, s.item, s.talk_npc);
         break;
     }
     default:
@@ -280,7 +282,9 @@ static void usage(void) {
             "       ... --claim N          say our character is in save block N; prints the slot we end up in\n"
             "       ... --weather T,I      send the town weather (type, intensity); with --wait, once a second\n"
             "       ... --vanish           exit without saying goodbye (a crashed game), after everything else\n"
-            "       ... --npc ID,X,Z        send one villager state (we own villager ID at X,Z)\n"
+            "       ... --npc ID,X,Z[,ACT,FLAGS]  send one villager state (we own villager ID at X,Z)\n"
+            "       ... --item N            hold item kind N in the --state (0 = empty hands)\n"
+            "       ... --push TOWN.gci     push our own two blocks out of TOWN.gci without saving\n"
             "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
             "                              so a running game keeps drawing this fake resident\n"
             "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
@@ -304,6 +308,8 @@ int main(int argc, char** argv) {
     acnet_weather_t wx;
     int vanish = 0;
     const char* npc = NULL;
+    const char* push = NULL;
+    int item = 0;
     acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -331,6 +337,8 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--weather") == 0 && v) { weather = v; i++; }
         else if (strcmp(a, "--vanish") == 0) { vanish = 1; }
         else if (strcmp(a, "--npc") == 0 && v) { npc = v; i++; }
+        else if (strcmp(a, "--push") == 0 && v) { push = v; i++; }
+        else if (strcmp(a, "--item") == 0 && v) { item = atoi(v); i++; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -399,11 +407,13 @@ int main(int argc, char** argv) {
     }
     if (npc) {
         struct { acnet_npc_hdr_t h; acnet_npc_state_t s; } ACNET_PACKED pk;
-        int id = 0;
+        int id = 0, act = ACNET_NPC_ACT_NONE, flags = 0;
         memset(&pk, 0, sizeof(pk));
-        sscanf(npc, "%d,%f,%f", &id, &pk.s.x, &pk.s.z);
+        sscanf(npc, "%d,%f,%f,%d,%d", &id, &pk.s.x, &pk.s.z, &act, &flags);
         pk.h.count = 1;
         pk.s.npc_id = (uint16_t)id;
+        pk.s.act = (uint8_t)act;
+        pk.s.flags = (uint8_t)flags;
         send_msg(peer, ACNET_CH_STATE, ACNET_MSG_NPC_STATE, &pk, sizeof(pk), NULL, 0, 0);
         enet_host_flush(host);
     }
@@ -429,6 +439,9 @@ int main(int argc, char** argv) {
         ps.anim0_frame = 1.0f;
         ps.anim1_frame = 1.0f;
         ps.anim_speed = 0.0f;
+        ps.item = (uint16_t)item;
+        ps.item_anim = -1;
+        ps.item_frame = 1.0f;
         send_msg(peer, ACNET_CH_STATE, ACNET_MSG_PLAYER_STATE, &ps, sizeof(ps), NULL, 0, 0);
         enet_host_flush(host);
     }
@@ -463,6 +476,26 @@ int main(int argc, char** argv) {
         free(blob);
         rc = wait_for(host, peer, ACNET_MSG_TOWN_ACK, 10000, NULL);
         if (rc <= 0) { exit_code = 3; goto done; }
+    }
+    if (push) {
+        size_t len = 0;
+        uint8_t* town = read_file(push, &len);
+        acnet_resident_push_t q;
+        uint8_t blocks[ACNET_RESIDENT_BLOB_SIZE];
+        if (!town || len != ACNET_TOWN_SIZE || g_my_slot < 0 || g_my_slot >= ACNET_MAX_PLAYERS) {
+            fprintf(stderr, "cannot push from %s (need a %u-byte town and a slot)\n", push, (unsigned)ACNET_TOWN_SIZE);
+            free(town);
+            exit_code = 1;
+            goto done;
+        }
+        memcpy(blocks, town + ACNET_PRIVATE_OFFSET(g_my_slot), ACNET_PRIVATE_SIZE);
+        memcpy(blocks + ACNET_PRIVATE_SIZE, town + ACNET_HOME_OFFSET(g_my_slot), ACNET_HOME_SIZE);
+        free(town);
+        memset(&q, 0, sizeof(q));
+        q.slot = (uint8_t)g_my_slot;
+        send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_PUSH, &q, sizeof(q), blocks, sizeof(blocks), 1);
+        enet_host_flush(host);
+        printf("PUSHED slot=%d\n", g_my_slot);
     }
     if (chat) {
         acnet_chat_t m;

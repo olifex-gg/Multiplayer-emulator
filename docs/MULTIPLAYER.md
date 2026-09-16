@@ -270,9 +270,37 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   indoors) are not mirrored yet, and a copy that never had the villager loaded does not
   spawn it.
 
-What is **not** there yet: villager actions beyond walk/stand, held items on puppets, chat
-(counted but not rendered), and a house index in `area` (two residents inside different
-houses of the same size still count as the same place).
+- **The finish (step 4).** *Held items:* the state packet carries the item kind, the
+  tool's own animation and frame; a puppet draws the axe or shovel as a display list at
+  its right hand, the net and rod as their own small skeletons playing the sender's
+  animation, and an umbrella as the game's umbrella tool actor born as the puppet's
+  child (all tool models are shared statics in the executable, so nothing is DMA'd or
+  fought over). *Which house:* `area` is the scene id plus, for the house scenes, the
+  house owner the game recorded on the way in (`house_owner_name`: a house index for a
+  resident's house, the villager's name for theirs), so two residents in different houses
+  of the same size no longer see each other. *Villager acts:* the villager stream carries
+  the owner's act and flags; a following copy hides when the owner's villager goes
+  indoors and comes out where it did, runs when it runs, opens and closes its umbrella
+  with it, and plays the singing and clapping acts (self-contained ones the copy can run
+  alone). *Resident push (`ACNET_MSG_RESIDENT_PUSH`):* a game hashes its own character and
+  house blocks once a second and sends them, without a save, when they change (at most
+  every 5 s); the server stores only those blocks, marks the resident as saved so nobody
+  else's upload can overwrite them, and relays them as `RESIDENT_DATA`, so a brand-new
+  character, a new shirt or moved furniture reach the others at once. *Town clock:* the
+  server sends its UTC time and its local-time offset at login and on every ping (one a
+  minute); the client adds the difference between the host's wall clock and its own to
+  the hardware time in `lbRTC_GetHardTime`, so every resident's game agrees on the hour
+  and the day. *Chat:* T opens a line at the bottom of the screen, Enter sends, Esc
+  cancels; lines from everyone show top-left for 14 s (`pc/src/pc_chat.c`), and the
+  keyboard is the chat's while the line is open (and until the Enter that closed it is
+  released, since Enter is also Start). All confirmed with two games on one PC; protocol
+  version 4, e2e checks 22-24.
+
+What is **not** there yet: a villager copy that was never loaded on the follower is not
+spawned; villager acts with a target (chasing an insect, reacting to a tool, greeting the
+player) run as walk/stand on the copies; a puppet's held item plays its animation but not
+its effects (the net's catch, the rod's float); hats and accessories drawn by the player's
+per-joint callbacks; more than four residents.
 
 ### Not doing (and why)
 

@@ -700,14 +700,41 @@ static void aNPC_actor_move_show_after(ACTOR* actorx, GAME* game) {
  * and avoids obstacles like any other walk. Far off: put it there. Standing:
  * wait and turn to the owner's facing. The talk/greeting code still runs, so a
  * local conversation with it works (and makes us its owner for the duration). */
+/* A following copy that is hidden (indoors): stay hidden while the owner's
+ * villager is, come out where the owner's is when it does. Returns TRUE when
+ * the copy is remote-controlled and the normal hidden-schedule must not run. */
+static int aNPC_remote_hidden(NPC_ACTOR* nactorx, GAME_PLAY* play) {
+    ACTOR* actorx = &nactorx->actor_class;
+    float x, y, z;
+    int angle, walking, act, flags;
+    (void)play;
+
+    if (!Puppet_npc_remote(actorx, &x, &y, &z, &angle, &walking, &act, &flags)) {
+        return FALSE;
+    }
+    if (flags & ACNET_NPC_FLAG_HIDDEN) {
+        return TRUE; /* the owner's villager is indoors too: nothing to do */
+    }
+    OSReport("[npc] villager %04x came back out in its owner's game; showing it at %.0f,%.0f\n",
+             (unsigned)actorx->npc_id, x, z);
+    actorx->world.position.x = x;
+    actorx->world.position.y = y;
+    actorx->world.position.z = z;
+    actorx->shape_info.rotation.y = (s16)angle;
+    actorx->world.angle.y = (s16)angle;
+    nactorx->condition_info.hide_request = FALSE;
+    return TRUE;
+}
+
 static int aNPC_remote_control(NPC_ACTOR* nactorx, GAME_PLAY* play) {
     static struct { u16 npc_id; u8 remote; } seen[32];
     ACTOR* actorx = &nactorx->actor_class;
     float x, y, z;
-    int angle, walking, i, idx = -1;
-    int remote = Puppet_npc_remote(actorx, &x, &y, &z, &angle, &walking);
+    int angle, walking, act, flags, i, idx = -1;
+    int remote = Puppet_npc_remote(actorx, &x, &y, &z, &angle, &walking, &act, &flags);
     u16 args[aNPC_REQUEST_ARG_NUM];
     f32 dx, dz, dist2;
+    int has_umbrella;
 
     for (i = 0; i < 32; i++) {
         if (seen[i].npc_id == actorx->npc_id) { idx = i; break; }
@@ -724,6 +751,40 @@ static int aNPC_remote_control(NPC_ACTOR* nactorx, GAME_PLAY* play) {
     }
     if (!remote) {
         return FALSE;
+    }
+
+    /* Indoors in the owner's game: go indoors here too (hides next frame). */
+    if (flags & ACNET_NPC_FLAG_HIDDEN) {
+        if (!nactorx->condition_info.hide_request) {
+            OSReport("[npc] villager %04x went indoors in its owner's game; hiding it here\n",
+                     (unsigned)actorx->npc_id);
+            nactorx->condition_info.hide_request = TRUE;
+        }
+        return TRUE;
+    }
+
+    /* An umbrella, or a song, in progress: let the act finish. */
+    if ((nactorx->action.idx == aNPC_ACT_UMB_OPEN || nactorx->action.idx == aNPC_ACT_UMB_CLOSE) &&
+        nactorx->action.step != aNPC_ACTION_END_STEP) {
+        return TRUE;
+    }
+    bzero(args, sizeof(args));
+    has_umbrella = nactorx->draw.sub_anim_type == aNPC_SUB_ANIM_UMBRELLA;
+    if ((flags & ACNET_NPC_FLAG_UMBRELLA) && !has_umbrella) {
+        aNPC_set_request_act(nactorx, 3, aNPC_ACT_UMB_OPEN, aNPC_ACT_TYPE_DEFAULT, args);
+        return TRUE;
+    }
+    if (!(flags & ACNET_NPC_FLAG_UMBRELLA) && has_umbrella) {
+        aNPC_set_request_act(nactorx, 3, aNPC_ACT_UMB_CLOSE, aNPC_ACT_TYPE_DEFAULT, args);
+        return TRUE;
+    }
+    /* Singing or clapping: self-contained acts a copy can play by itself.
+     * Re-requesting the same act is harmless (no re-INIT), and the animation
+     * keeps looping until the owner's villager moves on to something else. */
+    if (act == aNPC_ACT_ENSOU || act == aNPC_ACT_CLAP) {
+        aNPC_set_request_act(nactorx, 3, (u8)act, aNPC_ACT_TYPE_DEFAULT, args);
+        chase_angle(&actorx->shape_info.rotation.y, (s16)angle, 0x300);
+        return TRUE;
     }
 
     dx = x - actorx->world.position.x;
@@ -744,12 +805,13 @@ static int aNPC_remote_control(NPC_ACTOR* nactorx, GAME_PLAY* play) {
         dist2 = 0.0f;
     }
 
-    bzero(args, sizeof(args));
     if (walking || dist2 > 12.0f * 12.0f) {
         args[2] = (u16)(x < 0.0f ? 0.0f : x);
         args[3] = (u16)(z < 0.0f ? 0.0f : z);
         args[5] = 36; /* arrival radius, squared: within 6 units */
-        aNPC_set_request_act(nactorx, 3, aNPC_ACT_WALK, aNPC_ACT_TYPE_TO_POINT, args);
+        /* Run when the owner's villager runs (both acts share the walk proc). */
+        aNPC_set_request_act(nactorx, 3, act == aNPC_ACT_RUN ? aNPC_ACT_RUN : aNPC_ACT_WALK, aNPC_ACT_TYPE_TO_POINT,
+                             args);
     } else {
         aNPC_set_request_act(nactorx, 3, aNPC_ACT_WAIT, aNPC_ACT_TYPE_DEFAULT, args);
         chase_angle(&actorx->shape_info.rotation.y, (s16)angle, 0x300);
@@ -796,6 +858,11 @@ static void aNPC_actor_move(ACTOR* actorx, GAME* game) {
     }
 
     if (nactorx->condition_info.hide_flg == TRUE) {
+#ifdef TARGET_PC
+        if (aNPC_remote_hidden(nactorx, (GAME_PLAY*)game)) {
+            return; /* a following copy: its owner decides when it comes out */
+        }
+#endif
         aNPC_actor_move_hide(actorx, game);
     } else {
         aNPC_actor_move_show(actorx, game);

@@ -956,7 +956,7 @@ static void lobby_paint(HDC dc, int w, int h) {
     y += 2;
     draw_text(dc, g_font_body, CLR_TEXT, x, y, PANEL_R - 20 - x, 40, DT_LEFT | DT_WORDBREAK, g_lbv.town_text);
     y += 44;
-    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, y, PANEL_R - 20 - x, 54, DT_LEFT | DT_WORDBREAK, g_lbv.note_text);
+    draw_text(dc, g_font_small, CLR_TEXT_SOFT, x, y, PANEL_R - 20 - x, 72, DT_LEFT | DT_WORDBREAK, g_lbv.note_text);
 }
 
 static LRESULT CALLBACK LobbyProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -976,9 +976,11 @@ static LRESULT CALLBACK LobbyProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
             snprintf(g_lbv.note_text, sizeof(g_lbv.note_text),
                      "Friends in your house join with:  %s\n"
                      "Friends elsewhere need your public IP (search \"what is my IP\") "
-                     "and UDP port %d forwarded to this PC.", ip, SERVER_PORT);
+                     "and UDP port %d forwarded to this PC.\n"
+                     "In the game, press T to chat.", ip, SERVER_PORT);
         } else {
-            snprintf(g_lbv.note_text, sizeof(g_lbv.note_text), "Joining %s", g_lb_addr);
+            snprintf(g_lbv.note_text, sizeof(g_lbv.note_text), "Joining %s\nIn the game, press T to chat.",
+                     g_lb_addr);
         }
         SetTimer(wnd, 1, 1000, NULL);
         return 0;

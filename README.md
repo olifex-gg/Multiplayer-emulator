@@ -24,6 +24,29 @@ Pre-built releases are available on the [Releases](https://github.com/flyngmt/AC
 
 The game reads all assets directly from the disc image at startup. No extraction or preprocessing step is needed.
 
+## Playing online (this fork)
+
+Up to four people play as the four residents of one shared town at the same time.
+Everyone needs the same `AnimalCrossing.exe`, `AnimalCrossingOnline.exe`, `shaders/` and
+their own disc image in `rom/`.
+
+1. One person clicks **Host a town** in `AnimalCrossingOnline.exe` and shares the invite
+   code (friends on the same Wi-Fi use the address the launcher shows; friends elsewhere
+   need the host's public IP and UDP port 7777 forwarded to the host's PC).
+2. Everyone else clicks **Join a town**, enters the code and address, and picks a resident
+   name. The waiting room shows who lives in the town and who is online.
+3. In the game: **T** opens the chat line, **Enter** sends, **Esc** cancels. Messages show
+   in the top-left corner for a few seconds.
+
+What is shared: the town itself (trees, flowers, dropped items, holes, buried things),
+every resident's character and house, the weather and the calendar (the host's clock is
+the town's clock), and the villagers, who stand in the same places for everyone. You see
+the other residents walk, run, emote, hold their tools and umbrellas, and talk to
+villagers, and you cannot walk through each other. Saving is safe: the server keeps each
+resident's own character and house, so nobody can overwrite anybody else's.
+
+Every game writes `aclog.txt` next to the exe; send it along when something goes wrong.
+
 ## Building from Source
 
 Only needed if you want to modify the code. Otherwise, use the [pre-built release](https://github.com/flyngmt/ACGC-PC-Port/releases) above.

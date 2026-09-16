@@ -59,8 +59,21 @@ static BOOL l_lbRTC_IsSampled;
  *
  * @return OSTime representing the current hardware time in ticks.
  */
+#ifdef TARGET_PC
+extern long long pc_net_server_clock_skew_ms(void);
+#endif
+
 static OSTime lbRTC_GetHardTime() {
+#ifdef TARGET_PC
+  /* Multiplayer: the town has one clock, the host's. pc_net knows how far
+   * the host's wall clock is from this PC's; shifting the hardware time by
+   * that much makes every resident's game agree on the hour, the day and
+   * therefore the weather roll, the shop hours and the daily events. Zero
+   * in single-player. */
+  return OSGetTime() + (OSTime)pc_net_server_clock_skew_ms() * (OSTime)(OS_TIMER_CLOCK / 1000);
+#else
   return OSGetTime();
+#endif
 }
 
 /**

@@ -13,9 +13,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h> /* _mkdir */
+#include <windows.h>
+#else
+#include <sys/time.h>
 #endif
 
 #include "protocol.h"
@@ -54,7 +58,13 @@ static int      s_weather_in_pending, s_weather_in_type, s_weather_in_intensity;
 static uint8_t  s_weather_in_grow[ACNET_GROW_TIME_SIZE];
 static int          s_authority_id = -1;
 static int          s_self_id = -1;
-static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
+static int64_t      s_clock_skew_ms;   /* the host's wall clock minus ours, in ms (see pc_net_server_clock_skew_ms) */
+static int          s_clock_skew_known;
+static char         s_peer_name[ACNET_MAX_PLAYERS][ACNET_NAME_LEN + 1]; /* login names by resident slot */
+static uint32_t     s_push_last_ms;    /* resident push: when we last sent our blocks */
+static uint32_t     s_push_hash;       /* ...and what they hashed to */
+static int          s_push_hash_known;
+static unsigned     s_push_tx;
 static uint32_t     s_town_version;
 static int          s_town_present;     /* the server had a town when we logged in */
 static unsigned     s_puppet_rx;       /* diagnostic counters */
@@ -105,17 +115,67 @@ static void land_in_push(const acnet_land_cell_t* c) {
     s_land_in_count++;
 }
 
-/* Pending chat, drained by the game once per frame. */
+/* Pending chat, drained by the game once per frame. A small ring, so two
+ * lines arriving in the same frame both get through. */
 typedef struct {
-    int  pending;
     uint8_t slot;
     uint8_t len;
     char text[ACNET_CHAT_LEN + 1];
-} chat_inbox_t;
-static chat_inbox_t s_chat_inbox;
+} chat_msg_t;
+#define CHAT_IN_CAP 8
+static chat_msg_t s_chat_in[CHAT_IN_CAP];
+static unsigned   s_chat_in_head, s_chat_in_count;
 
 /* A remote resident is considered gone if silent this long. */
 #define REMOTE_TIMEOUT_MS 3000
+
+/* --- Wall clock ----------------------------------------------------------
+ * Unix time in ms, and this PC's local-time offset, computed the same way
+ * the server does it, so the two can be compared. */
+static int64_t wall_unix_ms(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    ULARGE_INTEGER u;
+    GetSystemTimeAsFileTime(&ft);
+    u.LowPart = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    return (int64_t)((u.QuadPart - 116444736000000000ULL) / 10000ULL);
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+#endif
+}
+
+static int local_tz_min(void) {
+    time_t now = time(NULL);
+    struct tm g = *gmtime(&now);
+    time_t gt;
+    g.tm_isdst = -1;
+    gt = mktime(&g);
+    return (int)((long)difftime(now, gt) / 60);
+}
+
+/* The server just told us its clock: remember how far the host's local
+ * wall clock is from ours. The game's clock follows the host's (lb_rtc.c). */
+static void clock_learn(int64_t server_unix_ms, int server_tz_min) {
+    int64_t host_local = server_unix_ms + (int64_t)server_tz_min * 60000;
+    int64_t our_local = wall_unix_ms() + (int64_t)local_tz_min() * 60000;
+    int64_t skew = host_local - our_local;
+    if (!s_clock_skew_known || skew - s_clock_skew_ms > 2000 || s_clock_skew_ms - skew > 2000) {
+        OSReport("[net] town clock: the host's clock is %lld s %s ours (host UTC%+d min, we are UTC%+d min); the game follows the host\n",
+                 (long long)(skew < 0 ? -skew : skew) / 1000, skew < 0 ? "behind" : "ahead of", server_tz_min,
+                 local_tz_min());
+    }
+    s_clock_skew_ms = skew;
+    s_clock_skew_known = 1;
+}
+
+static void peer_name_set(int slot, const char* name16) {
+    if (slot < 0 || slot >= ACNET_MAX_PLAYERS) return;
+    memcpy(s_peer_name[slot], name16, ACNET_NAME_LEN);
+    s_peer_name[slot][ACNET_NAME_LEN] = '\0';
+}
 
 /* Villagers streamed by their owners, keyed by npc_id. */
 #define NPC_TABLE_SIZE 64
@@ -319,7 +379,17 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         s_slot = w.slot;
         s_authority_id = w.authority_client_id;
         s_town_version = w.town_version;
-        s_clock_skew_ms = w.server_unix_ms - local_ms();
+        clock_learn(w.server_unix_ms, w.server_tz_min);
+        memset(s_peer_name, 0, sizeof(s_peer_name));
+        {
+            int i;
+            for (i = 0; i < w.peer_count && i < ACNET_MAX_PLAYERS; i++) {
+                peer_name_set(w.peers[i].slot, w.peers[i].name);
+            }
+        }
+        if (s_slot >= 0 && s_slot < ACNET_MAX_PLAYERS) {
+            snprintf(s_peer_name[s_slot], sizeof(s_peer_name[s_slot]), "%s", s_cfg.name);
+        }
         OSReport("[net] logged in: resident slot %d, town %s (v%u), authority client %d, %u peer(s)\n",
                  w.slot, w.town_present ? "present" : "absent", w.town_version, w.authority_client_id,
                  w.peer_count);
@@ -399,7 +469,7 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
             memcpy(s_resident_update[r.slot].bytes, blob, ACNET_RESIDENT_BLOB_SIZE);
             s_resident_update[r.slot].version = r.town_version;
             s_resident_update[r.slot].pending = 1;
-            OSReport("[net] resident %u saved (town v%u); taking their character and house into this town\n",
+            OSReport("[net] resident %u sent their character and house (town v%u); taking them into this town\n",
                      r.slot, r.town_version);
         }
         return ACNET_MSG_RESIDENT_DATA;
@@ -422,6 +492,13 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
             if ((int)r.slot != s_slot) remote_drop_slot(r.slot); /* never puppet ourselves */
             s_slot = r.slot;
         }
+        if (r.slot < ACNET_MAX_PLAYERS && (int)r.slot != s_slot) {
+            /* Our name moves with us; whoever was in the new slot swapped into our old one. */
+            char old_name[ACNET_NAME_LEN + 1];
+            memcpy(old_name, s_peer_name[r.slot], sizeof(old_name));
+            snprintf(s_peer_name[r.slot], sizeof(s_peer_name[r.slot]), "%s", s_cfg.name);
+            if (s_slot >= 0 && s_slot < ACNET_MAX_PLAYERS) memcpy(s_peer_name[s_slot], old_name, sizeof(old_name));
+        }
         if (r.reason == ACNET_SLOT_ACCEPTED) {
             OSReport("[net] server agrees: we are resident %u\n", r.slot);
         } else if (r.reason == ACNET_SLOT_REFUSED) {
@@ -442,13 +519,28 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         s_authority_id = a.client_id;
         return ACNET_MSG_AUTHORITY;
     }
-    case ACNET_MSG_PEER_JOINED:
+    case ACNET_MSG_PEER_JOINED: {
+        acnet_peer_t p;
+        if (payload_len == sizeof(p)) {
+            memcpy(&p, payload, sizeof(p));
+            peer_name_set(p.slot, p.name);
+        }
         return hdr->type;
+    }
     case ACNET_MSG_PEER_LEFT: {
         acnet_peer_t p;
         if (payload_len == sizeof(p)) {
             memcpy(&p, payload, sizeof(p));
             remote_drop_slot(p.slot); /* remove their puppet immediately */
+            if (p.slot < ACNET_MAX_PLAYERS && (int)p.slot != s_slot) s_peer_name[p.slot][0] = '\0';
+        }
+        return hdr->type;
+    }
+    case ACNET_MSG_PONG: {
+        acnet_pong_t p;
+        if (payload_len == sizeof(p)) {
+            memcpy(&p, payload, sizeof(p));
+            clock_learn(p.server_unix_ms, p.server_tz_min);
         }
         return hdr->type;
     }
@@ -515,12 +607,18 @@ static int pump_until(uint8_t want, uint32_t timeout_ms) {
                         if (payload_len == sizeof(acnet_chat_t)) {
                             acnet_chat_t m;
                             memcpy(&m, payload, sizeof(m));
+                            chat_msg_t* slot;
                             if (m.len > ACNET_CHAT_LEN) m.len = ACNET_CHAT_LEN;
-                            s_chat_inbox.slot = m.slot;
-                            s_chat_inbox.len = m.len;
-                            memcpy(s_chat_inbox.text, m.text, m.len);
-                            s_chat_inbox.text[m.len] = '\0';
-                            s_chat_inbox.pending = 1;
+                            if (s_chat_in_count == CHAT_IN_CAP) { /* drop the oldest */
+                                s_chat_in_head = (s_chat_in_head + 1) % CHAT_IN_CAP;
+                                s_chat_in_count--;
+                            }
+                            slot = &s_chat_in[(s_chat_in_head + s_chat_in_count) % CHAT_IN_CAP];
+                            slot->slot = m.slot;
+                            slot->len = m.len;
+                            memcpy(slot->text, m.text, m.len);
+                            slot->text[m.len] = '\0';
+                            s_chat_in_count++;
                             s_chat_rx++;
                         }
                         t = hdr.type;
@@ -651,10 +749,20 @@ void pc_net_service(void) {
     if (now - last_report >= 5000) {
         int i, n = 0;
         for (i = 0; i < ACNET_MAX_PLAYERS; i++) n += s_remote[i].active ? 1 : 0;
-        OSReport("[net] state sent=%u received=%u residents-visible=%d land-cells sent=%u received=%u%s villagers sent=%u received=%u rtt=%ums\n",
+        OSReport("[net] state sent=%u received=%u residents-visible=%d land-cells sent=%u received=%u%s villagers sent=%u received=%u blocks-pushed=%u rtt=%ums\n",
                  s_puppet_tx, s_puppet_rx, n, s_land_tx, s_land_rx, s_land_dropped ? " (some dropped!)" : "",
-                 s_npc_tx, s_npc_rx, s_peer ? s_peer->roundTripTime : 0u);
+                 s_npc_tx, s_npc_rx, s_push_tx, s_peer ? s_peer->roundTripTime : 0u);
         last_report = now;
+    }
+    {
+        /* A ping a minute keeps the town clock lined up with the host's. */
+        static uint32_t last_ping;
+        if (now - last_ping >= 60000) {
+            acnet_ping_t p;
+            p.nonce = now;
+            send_msg(ACNET_CH_CONTROL, ACNET_MSG_PING, &p, sizeof(p), NULL, 0, 1);
+            last_ping = now;
+        }
     }
 }
 
@@ -825,20 +933,60 @@ void pc_net_send_chat(const char* text) {
 }
 
 int pc_net_poll_chat(int* out_slot, char* out_text, int out_size) {
-    if (!s_active || !s_chat_inbox.pending) return 0;
-    if (out_slot) *out_slot = s_chat_inbox.slot;
+    chat_msg_t* m;
+    if (!s_active || s_chat_in_count == 0) return 0;
+    m = &s_chat_in[s_chat_in_head];
+    if (out_slot) *out_slot = m->slot;
     if (out_text && out_size > 0) {
-        int n = s_chat_inbox.len < (out_size - 1) ? s_chat_inbox.len : (out_size - 1);
-        memcpy(out_text, s_chat_inbox.text, n);
+        int n = m->len < (out_size - 1) ? m->len : (out_size - 1);
+        memcpy(out_text, m->text, n);
         out_text[n] = '\0';
     }
-    s_chat_inbox.pending = 0;
+    s_chat_in_head = (s_chat_in_head + 1) % CHAT_IN_CAP;
+    s_chat_in_count--;
     return 1;
 }
 
 /* --- Clock (step 4) ------------------------------------------------------ */
 
-long long pc_net_server_clock_skew_ms(void) { return s_active ? (long long)s_clock_skew_ms : 0; }
+long long pc_net_server_clock_skew_ms(void) { return (s_active && s_clock_skew_known) ? (long long)s_clock_skew_ms : 0; }
+
+const char* pc_net_peer_name(int slot) {
+    if (!s_active || slot < 0 || slot >= ACNET_MAX_PLAYERS) return "";
+    return s_peer_name[slot];
+}
+
+/* --- Resident push ------------------------------------------------------- */
+
+static uint32_t fnv1a(const uint8_t* p, size_t n, uint32_t h) {
+    while (n--) {
+        h ^= *p++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+int pc_net_push_own_blocks(const void* private_be, size_t private_len, const void* home_be, size_t home_len,
+                           int force) {
+    uint32_t now, h;
+    uint8_t blob[ACNET_RESIDENT_BLOB_SIZE];
+    acnet_resident_push_t q;
+    if (!s_active || s_slot < 0 || private_len != ACNET_PRIVATE_SIZE || home_len != ACNET_HOME_SIZE) return 0;
+    now = enet_time_get();
+    if (s_push_hash_known && now - s_push_last_ms < 5000) return 0; /* at most one every 5 s */
+    h = fnv1a((const uint8_t*)home_be, home_len, fnv1a((const uint8_t*)private_be, private_len, 2166136261u));
+    if (s_push_hash_known && h == s_push_hash && !force) return 0;
+    memcpy(blob, private_be, ACNET_PRIVATE_SIZE);
+    memcpy(blob + ACNET_PRIVATE_SIZE, home_be, ACNET_HOME_SIZE);
+    memset(&q, 0, sizeof(q));
+    q.slot = (uint8_t)s_slot;
+    send_msg(ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_PUSH, &q, sizeof(q), blob, sizeof(blob), 1);
+    s_push_last_ms = now;
+    s_push_hash = h;
+    s_push_hash_known = 1;
+    s_push_tx++;
+    return 1;
+}
 
 static uint8_t* read_town_file(size_t* out_len) {
     FILE* fp = fopen(NET_GCI_PATH, "rb");

@@ -4,17 +4,19 @@ Written at the end of the first long build-and-playtest session and updated sinc
 fresh session can pick up without re-deriving anything. `CLAUDE.md` has the standing
 rules; this file has the situation. `docs/MULTIPLAYER.md` has the design reasoning.
 
-**Last updated 2026-09-15 (night), the first session on the user's own PC.** Landed
-today, all confirmed on the real game here with two copies of it running side by side
+**Last updated 2026-09-16 (small hours).** The build is feature-complete for the design
+in `docs/MULTIPLAYER.md`: everything below is in the user's game folder, protocol
+version 4, and **both players need the new `AnimalCrossing.exe` and
+`AnimalCrossingOnline.exe`** (older copies are refused by the new server). Landed on
+2026-09-15/16, all confirmed on the real game here with two copies running side by side
 (see "Playtesting without a friend"): the puppet no longer crashes the game; it stands,
-walks and animates exactly as the other resident's game does; it is dressed as *that*
-resident from their own save block; residents' slots follow their save block; puppets are
-solid; residents are only drawn to those in the same scene; the weather and the daily
-land renewal come from the world authority; and the land relay no longer corrupts the
-stored town (a real, crash-causing bug found tonight, below). The build is in the user's
-game folder; **both players need the new `AnimalCrossing.exe` and
-`AnimalCrossingOnline.exe`** (protocol version 2; old copies are refused by the new
-server). Villagers now stand in the same places for everyone too (below).
+walks, animates and holds its tools exactly as the other resident's game does; it is
+dressed as *that* resident from their own save block, which now reaches the others the
+moment it changes, save or no save; residents' slots follow their save block; puppets
+are solid; residents are only drawn to those in the same room; the weather, the daily
+land renewal and the clock come from the host; villagers stand in the same places and
+do the same things for everyone; the land relay no longer corrupts the stored town; and
+there is a chat (T). The previous build is in `old-build-2026-09-15-night`.
 
 ## Where things actually stand
 
@@ -44,9 +46,10 @@ Two people on two PCs, in different houses, have played in the same town. That m
   frame, relayed, and written into the stored town. Seen flowing both ways between two
   real games on 2026-09-15; the placeholder bug it had (below) is fixed.
 
-**Not started:** villager actions beyond walking/standing (sitting, fishing, going indoors
-are not mirrored), chat through the game's text entry, the shared town clock, held items
-on puppets, and more than four residents.
+**Not started:** a villager copy that was never loaded on the follower is not spawned;
+villager acts that need a target (chasing an insect, reacting to a tool, greeting) run as
+walk/stand on the copies; a puppet's tool has no effects (net catch, rod float); hats and
+accessories; more than four residents.
 
 ## The puppet crash: fixed 2026-09-14, awaiting a playtest
 
@@ -174,6 +177,40 @@ where its owner has it; moving it there`. Seen in the rig: Alana's copy of `e02a
 units off, got moved, then tracked within 19-47 units while walking (thresholds since
 tightened to 12/6). Not mirrored yet: what the owner's villager is *doing* (sitting,
 fishing, entering a house); a copy that is not loaded on the follower is simply absent.
+
+**The finish (2026-09-16, small hours).** Protocol version 4. *Held items* (`m_puppet.c_inc`):
+the state packet carries `item` (kind + 1), `item_anim` (the tool's own animation, an
+item-data index) and `item_frame`; `Puppet_set_item` builds `item_keyframe` for the
+skeleton tools (net, rod) or records the display-list shape (axe, shovel) and sets
+`umbrella_state = aTOL_ACTION_TAKEOUT` for umbrellas so `Player_actor_Get_umbrella_p`
+births the umbrella tool actor as the puppet's child on the first draw; `Puppet_draw_After`
+records the hand and head joints; `Puppet_item_draw` draws at `right_hand_mtx`. The
+umbrella child is `Actor_delete`d in `Puppet_actor_dt` and whenever the item changes: its
+draw reads `parent_actor` and the actor system only unlinks a deleted parent. Seen on
+the rig with `acnet_cli --item 1 / 10 / 12 / 52` (axe, net, umbrella, rod): all four draw
+in the puppet's hand. *House index:* `Puppet_area` is `ACNET_AREA_MAKE(scene,
+house_owner_name + 1)` for the player-room scenes, `SCENE_NPC_HOUSE` and
+`SCENE_COTTAGE_NPC`. *Villager acts:* `acnet_npc_state_t.act/flags`
+(`ACNET_NPC_FLAG_HIDDEN`, `ACNET_NPC_FLAG_UMBRELLA`); `aNPC_remote_hidden` (called from
+`aNPC_actor_move` for a hidden copy) keeps a following copy indoors while the owner's is
+and brings it out where the owner's came out; `aNPC_remote_control` hides a copy whose
+owner went indoors, requests `UMB_OPEN`/`UMB_CLOSE` to match, `RUN` instead of `WALK` when
+the owner's runs, and `ENSOU`/`CLAP` while the owner's plays them. *Resident push:*
+`pc_net_push_own_blocks` (FNV-1a hash of the two blocks, at most one send per 5 s), called
+from `Puppet_net_update_local` once a second; server `handle_resident_push` ->
+`town_set_resident_blocks` (stores, marks `slot_uploaded`, flushes, no version bump) and
+relays as `RESIDENT_DATA`. On the rig each game pushed exactly once on entering the town
+and never again while idle (the blocks do not tick). *Town clock:* `acnet_welcome_t` and
+`acnet_pong_t` carry `server_tz_min`; `clock_learn` in `pc_net.c` keeps the host-minus-us
+wall-clock difference and `lbRTC_GetHardTime` adds it under `TARGET_PC`; the client pings
+once a minute. Logged as `[net] town clock: the host's clock is N s ahead of ours ...`.
+*Chat:* `pc/src/pc_chat.c` (+ hooks in `pc_main.c`, `pc_pad.c`, `graph.c`). The first
+build opened the inventory after every sent line: the Enter that sent it was still held
+when `PADRead` polled the keyboard, and Enter is Start. `pc_chat_blocks_pad()` now keeps
+the pad blocked until that key's `SDL_KEYUP` (with a 1.5 s fallback), and `pc_main.c`
+forwards key-ups to the chat for it. Names come from the server's login names
+(`pc_net_peer_name`). Rig: `[chat] Owen: hello alana` in both logs, drawn top-left in
+both games, no inventory afterwards.
 
 **The land relay placeholder bug (found and fixed 2026-09-15).** Alana's copy crashed the
 instant it entered the town: offset inside `mAGrw_RenewalFgItem_ovl` after
@@ -317,6 +354,12 @@ in-game side. The recipe that confirmed the puppet fix:
    by Owen's house with `--state` 60 units away and a one-second walk; long walks drift
    sideways off terrain (a river bend near Alana's spawn) and never touch the target.
    `acnet_cli --name Carol --area 9 ...` is a resident indoors; `--area 7` outdoors.
+   `--item N` puts a tool in the fake resident's hand (1 axe, 10 net, 12 umbrella, 52
+   rod: the item kind + 1). `--push TOWN.gci` pushes the CLI's own blocks out of a town
+   file without saving. To chat from a driven game: `gamekeys.ps1 ptap T`, then
+   `ptype "hello there"`, then `ptap Return`; the other game's `aclog.txt` gets a
+   `[chat] Owen: hello there` line. Every new build of `AnimalCrossing.exe` must be copied
+   into BOTH rigs before relaunching them.
 8. Editing source from this session: write the edit as a Python file with the Write tool
    and run it with `D:/msys64/usr/bin/python3.exe /c/...`. A bash heredoc mangled a
    `'\0'` into a real NUL byte once, and the files mix CRLF and LF.

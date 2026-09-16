@@ -105,6 +105,17 @@ static int64_t unix_ms(void) {
 #endif
 }
 
+/* Minutes this machine's local time is ahead of UTC right now (DST included),
+ * so a client in another time zone can line its town clock up with ours. */
+static int16_t local_tz_min(void) {
+    time_t now = time(NULL);
+    struct tm g = *gmtime(&now);
+    time_t gt;
+    g.tm_isdst = -1;
+    gt = mktime(&g); /* interprets the UTC fields as local time: the difference is the offset */
+    return (int16_t)((long)difftime(now, gt) / 60);
+}
+
 /* --------------------------------------------------------------- invites */
 
 static void load_invites(void) {
@@ -366,6 +377,7 @@ static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
     w.town_present = g_rooms[room].town.data ? 1 : 0;
     w.town_version = g_rooms[room].town.version;
     w.server_unix_ms = unix_ms();
+    w.server_tz_min = local_tz_min();
     for (i = 0; i < ACNET_MAX_CLIENTS && w.peer_count < ACNET_MAX_PLAYERS; i++) {
         client_t* o = &g_clients[i];
         if (!o->in_use || !o->logged_in || o->room != room || o == c) continue;
@@ -614,6 +626,34 @@ static void handle_weather(client_t* c, const uint8_t* payload, size_t len) {
     room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &w, sizeof(w), 1);
 }
 
+/* A resident's own two blocks, pushed without a save: store them (only
+ * their blocks can change), protect them from now on, and hand them to the
+ * others as RESIDENT_DATA so a brand-new character is seen at once. */
+static void handle_resident_push(client_t* c, const uint8_t* payload, size_t payload_len, const uint8_t* blob,
+                                 size_t blob_len) {
+    acnet_resident_push_t p;
+    acnet_resident_data_t rd;
+    room_t* room;
+    int stored;
+    if (!c->logged_in || payload_len != sizeof(p) || blob_len != ACNET_RESIDENT_BLOB_SIZE) return;
+    memcpy(&p, payload, sizeof(p));
+    room = &g_rooms[c->room];
+    if ((int)p.slot != c->slot) {
+        logf_("[%s] ignoring blocks for slot %u pushed by %s (resident %d)", room->town.invite, p.slot, c->name,
+              c->slot);
+        return;
+    }
+    stored = town_set_resident_blocks(&room->town, c->slot, blob);
+    memset(&rd, 0, sizeof(rd));
+    rd.slot = (uint8_t)c->slot;
+    rd.town_version = room->town.version;
+    room_broadcast_blob(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_RESIDENT_DATA, &rd, sizeof(rd), blob, blob_len, 1);
+    if (g_verbose) {
+        logf_("[%s] %s pushed their character and house (%s)", room->town.invite, c->name,
+              stored ? "stored in the town" : "no town stored yet; relayed only");
+    }
+}
+
 /* Villager states: stamp the sender and relay, unreliable, like player state. */
 static void handle_npc_state(client_t* c, const uint8_t* payload, size_t len) {
     acnet_npc_hdr_t h;
@@ -632,8 +672,10 @@ static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     acnet_pong_t r;
     if (len != sizeof(p)) return;
     memcpy(&p, payload, sizeof(p));
+    memset(&r, 0, sizeof(r));
     r.nonce = p.nonce;
     r.server_unix_ms = unix_ms();
+    r.server_tz_min = local_tz_min();
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_PONG, &r, sizeof(r), NULL, 0, 1);
 }
 
@@ -714,6 +756,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_CLAIM_SLOT:   handle_claim_slot(c, payload, payload_len); break;
     case ACNET_MSG_WEATHER:      handle_weather(c, payload, payload_len); break;
     case ACNET_MSG_NPC_STATE:    handle_npc_state(c, payload, payload_len); break;
+    case ACNET_MSG_RESIDENT_PUSH: handle_resident_push(c, payload, payload_len, payload + payload_len, blob_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;

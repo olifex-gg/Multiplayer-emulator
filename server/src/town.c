@@ -299,6 +299,17 @@ int town_flush(town_t* t) {
     return write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, t->data, ACNET_TOWN_SIZE) == 0;
 }
 
+int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob) {
+    if (slot < 0 || slot >= ACNET_MAX_PLAYERS || !t->data) return 0;
+    memcpy(t->data + ACNET_PRIVATE_OFFSET(slot), blob, ACNET_PRIVATE_SIZE);
+    memcpy(t->data + ACNET_HOME_OFFSET(slot), blob + ACNET_PRIVATE_SIZE, ACNET_HOME_SIZE);
+    if (!t->slot_uploaded[slot]) {
+        t->slot_uploaded[slot] = 1;
+        save_residents(t);
+    }
+    return town_flush(t);
+}
+
 int town_validate_blob(const uint8_t* blob, size_t len) {
     if (len != ACNET_TOWN_SIZE) return 0;
     /* CARDDir.gameName: "GAF" + region letter (GAFE for USA) */

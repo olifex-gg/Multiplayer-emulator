@@ -153,3 +153,18 @@ These each cost a debugging cycle. Do not regress them.
     villager. Never write a villager's position every frame except to correct a copy that
     is hundreds of units off -- the walk act, the BG check and the talk system all assume
     they own the position.
+12. **The keyboard is polled, not just evented.** `PADRead` reads `SDL_GetKeyboardState`
+    every frame, so a key an overlay consumed as an event (the Enter that sends a chat
+    line) is still "down" when the game next polls, and Enter is Start: the inventory
+    opened after every chat message until `pc_chat_blocks_pad()` kept the pad blocked
+    until that key's key-up. Any new overlay that takes keystrokes needs the same.
+13. **A child actor must not outlive its parent.** The puppet's umbrella is a tool actor
+    born as the puppet's child; its draw dereferences `parent_actor`, and deleting the
+    parent only unlinks the child. `Puppet_actor_dt` deletes the umbrella first. The same
+    applies to any other child a puppet ever grows.
+14. **The town has one clock and one look per resident, both pushed, not saved.** The
+    host's wall clock (via the server's `server_tz_min`) is added to the hardware time
+    in `lbRTC_GetHardTime`, and a resident's own character and house blocks are pushed
+    (`ACNET_MSG_RESIDENT_PUSH`) the moment they change. The server marks a pushed
+    resident as saved so their blocks are protected from everyone else's uploads; do not
+    weaken that, and never push someone else's blocks.

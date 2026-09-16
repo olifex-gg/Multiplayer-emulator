@@ -65,12 +65,24 @@ static int Puppet_in_town(GAME_PLAY* play) {
     }
 }
 
-/* Where a resident is, for deciding whether we can see them: the scene. A
- * resident indoors must not be drawn at their room coordinates in our field.
- * (Two residents inside different houses of the same size still share an
- * area for now; the house index is the next refinement.) */
+/* Where a resident is, for deciding whether we can see them: the scene,
+ * and for the scenes that several places share -- a resident's house rooms
+ * (one scene per size), a villager's house -- WHICH house, from the owner
+ * the game recorded on the way in (a house index for a resident's house,
+ * the villager's name for theirs). A resident indoors must not be drawn at
+ * their room coordinates in our field, and two residents in two different
+ * houses of the same size must not see each other either. */
 static u32 Puppet_area(GAME_PLAY* play) {
-    return (u32)play->scene_id;
+    int scene = play->scene_id;
+    u32 house = 0;
+
+    if (mSc_IS_SCENE_PLAYER_ROOM(scene) || scene == SCENE_NPC_HOUSE || scene == SCENE_COTTAGE_NPC) {
+        mActor_name_t owner = Common_Get(house_owner_name);
+        if (owner != RSV_NO) {
+            house = ((u32)owner + 1) & 0xFFFF;
+        }
+    }
+    return ACNET_AREA_MAKE(scene, house);
 }
 
 /* The puppet's body for collisions: the same 20 x 60 pipe as the player, in
@@ -120,6 +132,8 @@ typedef struct {
     int built_gender; /* the body the actor was built with */
     u16 seq;          /* last state sample applied */
     int have_seq;
+    int item_kind;    /* what is in its hand (mPlayer_ITEM_KIND_*), -1 for nothing */
+    int item_anim;    /* the tool's own animation (item data index), -1 for none */
 } puppet_anim_t;
 
 static puppet_anim_t s_anim[ACNET_MAX_PLAYERS];
@@ -284,6 +298,148 @@ static void Puppet_start_animation(PLAYER_ACTOR* p, int slot, int anim0, int ani
     a->part_table = part;
 }
 
+/* --- Held items -----------------------------------------------------------
+ * The tool models are plain display lists and skeletons in the executable
+ * (mPlib_Get_Item_DataPointer), shared by everyone, so a puppet can hold any
+ * tool without disturbing the local player's. A static tool (axe, shovel)
+ * is drawn at the puppet's right hand; a bending one (net, rod) is a small
+ * skeleton with its own animation, which the sender streams as well; an
+ * umbrella is the game's own umbrella tool actor, born as the puppet's child
+ * exactly as it is for the player. */
+static void Puppet_set_item_anim(PLAYER_ACTOR* p, int slot, int anim, f32 frame) {
+    puppet_anim_t* a = &s_anim[slot];
+    cKF_SkeletonInfo_R_c* kf = &p->item_keyframe;
+
+    a->item_anim = anim;
+    if (kf->skeleton == NULL) {
+        return;
+    }
+    if (!mPlayer_ITEM_DATA_VALID(anim) || mPlib_Get_Item_DataPointerType(anim) == mPlayer_ITEM_DATA_TYPE_GFX ||
+        mPlib_Get_Item_DataPointerType(anim) == mPlayer_ITEM_DATA_TYPE_SKELETON) {
+        /* No animation for it: use the tool's basic pose. */
+        anim = mPlib_Get_BasicItemAnimeIndex_fromItemKind(a->item_kind);
+        if (!mPlayer_ITEM_DATA_VALID(anim)) {
+            kf->animation = NULL;
+            return;
+        }
+    }
+    if (!(frame >= 1.0f)) {
+        frame = 1.0f;
+    }
+    /* STOP mode: a one-shot swing must not loop while the sender holds its
+     * last frame; a looping animation is simply re-synced when it wraps. */
+    cKF_SkeletonInfo_R_init_standard_setframeandspeedandmorphandmode(kf, mPlib_Get_Item_DataPointer(anim), NULL,
+                                                                     frame, 1.0f, 0.0f, cKF_FRAMECONTROL_STOP);
+}
+
+static void Puppet_drop_umbrella(PLAYER_ACTOR* p) {
+    if (p->umbrella_actor != NULL) {
+        Actor_delete(p->umbrella_actor); /* it must never outlive its parent: its draw reads the parent */
+        p->umbrella_actor = NULL;
+    }
+}
+
+static void Puppet_set_item(PLAYER_ACTOR* p, int slot, int kind, int anim, f32 frame) {
+    puppet_anim_t* a = &s_anim[slot];
+    int shape = -1;
+
+    if (!mPlayer_ITEM_KIND_VALID(kind)) {
+        kind = -1;
+    }
+    a->item_kind = kind;
+    p->item_kind = (s8)kind;
+    p->item_scale = 1.0f;
+    p->item_bank_idx = 0;
+    p->item_keyframe.skeleton = NULL;
+    p->item_keyframe.animation = NULL;
+    if (!mPlayer_ITEM_IS_UMBRELLA(kind)) {
+        Puppet_drop_umbrella(p);
+        p->umbrella_state = aTOL_ACTION_WAIT;
+    } else {
+        p->umbrella_state = aTOL_ACTION_TAKEOUT; /* Player_actor_Get_umbrella_p births it on the first draw */
+    }
+    if (kind >= 0) {
+        shape = mPlib_Get_BasicItemShapeIndex_fromItemKind(kind);
+    }
+    p->item_shape_type[0] = shape;
+    p->item_shape_type[1] = -1;
+    if (mPlayer_ITEM_DATA_VALID(shape) && mPlib_Get_Item_DataPointerType(shape) != mPlayer_ITEM_DATA_TYPE_GFX) {
+        cKF_SkeletonInfo_R_ct(&p->item_keyframe, mPlib_Get_Item_DataPointer(shape), NULL, p->item_joint_data,
+                              p->item_morph_data);
+        Puppet_set_item_anim(p, slot, anim, frame);
+    } else {
+        a->item_anim = anim;
+    }
+    OSReport("[puppet] resident %d now holds %s (kind %d)\n", slot,
+             kind < 0 ? "nothing" : mPlayer_ITEM_IS_UMBRELLA(kind) ? "an umbrella"
+                        : mPlayer_ITEM_IS_AXE(kind) ? "an axe" : mPlayer_ITEM_IS_NET(kind) ? "a net"
+                        : mPlayer_ITEM_IS_ROD(kind) ? "a fishing rod" : "a tool", kind);
+}
+
+/* The hand and head joints, so the tool and the umbrella sit in the hand.
+ * Everything else the player's own per-joint callbacks do (footprints, the
+ * item handover clip, effects) belongs to the one real player. */
+static int Puppet_draw_After(GAME* game, cKF_SkeletonInfo_R_c* kf, int joint_no, Gfx** gfx_pp, u8* work_flag, void* arg,
+                             s_xyz* rot, xyz_t* pos) {
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)arg;
+    (void)game; (void)kf; (void)gfx_pp; (void)work_flag; (void)rot; (void)pos;
+
+    if (joint_no == mPlayer_JOINT_HAND) {
+        Matrix_Position_Zero(&p->right_hand_pos);
+        Matrix_get(&p->right_hand_mtx);
+    } else if (joint_no == mPlayer_JOINT_LARM2) {
+        Matrix_Position_VecX(1100.0f, &p->left_hand_pos);
+        Matrix_get(&p->left_hand_mtx);
+    } else if (joint_no == mPlayer_JOINT_HEAD) {
+        Matrix_Position_Zero(&p->head_pos);
+    }
+    return TRUE;
+}
+
+static void Puppet_item_draw(ACTOR* actorx, GAME* game) {
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    GRAPH* graph = game->graph;
+    int kind = p->item_kind;
+    int shape;
+    Mtx* mtx;
+
+    if (kind < 0) {
+        return;
+    }
+    if (mPlayer_ITEM_IS_UMBRELLA(kind)) {
+        TOOLS_ACTOR* umb = (TOOLS_ACTOR*)Player_actor_Get_umbrella_p(actorx, game);
+        if (umb != NULL) {
+            Matrix_push();
+            Matrix_put(&p->right_hand_mtx);
+            Matrix_get(&umb->matrix_work);
+            umb->init_matrix = TRUE;
+            Matrix_pull();
+        }
+        return;
+    }
+    shape = p->item_shape_type[0];
+    if (!mPlayer_ITEM_DATA_VALID(shape)) {
+        return;
+    }
+    Matrix_push();
+    Matrix_put(&p->right_hand_mtx);
+    mtx = _Matrix_to_Mtx_new(graph);
+    if (mtx != NULL) {
+        int is_gfx = mPlib_Get_Item_DataPointerType(shape) == mPlayer_ITEM_DATA_TYPE_GFX;
+        _texture_z_light_fog_prim(graph);
+        OPEN_POLY_OPA_DISP(graph);
+        gSPMatrix(POLY_OPA_DISP++, mtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+        if (is_gfx) {
+            gSPDisplayList(POLY_OPA_DISP++, mPlib_Get_Item_DataPointer(shape));
+        }
+        CLOSE_POLY_OPA_DISP(graph);
+        if (!is_gfx && p->item_keyframe.skeleton != NULL) {
+            cKF_Si3_draw_R_SV(game, &p->item_keyframe, p->item_work_mtx[game->frame_counter % 2], NULL, NULL, p);
+        }
+    }
+    Matrix_pull();
+}
+
 /* Construct the body skeleton the way the player does, but WITHOUT the global
  * side effects (no balloon child actor, no player_actor_exists flag, no camera
  * request), using the model for THAT resident's gender. */
@@ -306,7 +462,12 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
 
     p->now_main_index = mPlayer_INDEX_WAIT;
     p->now_item_main_index = 0;
-    p->item_kind = 0;
+    p->item_kind = -1;
+    p->umbrella_actor = NULL;
+    p->umbrella_state = aTOL_ACTION_WAIT;
+    p->item_shape_type[0] = p->item_shape_type[1] = -1;
+    s_anim[slot].item_kind = -1;
+    s_anim[slot].item_anim = -1;
 
     cKF_SkeletonInfo_R_ct(&p->keyframe0, mdl, NULL, p->joint_data, p->morph_data);
     p->keyframe1 = p->keyframe0; /* as the player does (m_player_main_dma.c_inc) */
@@ -341,6 +502,7 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
 static void Puppet_actor_dt(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
 
+    Puppet_drop_umbrella(p);
     if (p->keyframe0.skeleton != NULL) {
         ClObjPipe_dt(game, &p->col_pipe);
     }
@@ -377,20 +539,37 @@ static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
             Puppet_resync_frame(&p->keyframe0.frame_control, st.anim0_frame);
             Puppet_resync_frame(&p->keyframe1.frame_control, st.anim1_frame);
         }
+        /* The tool in their hand, and how it is bending. */
+        {
+            int kind = ACNET_ITEM_TO_KIND(st.item);
+            if (!mPlayer_ITEM_KIND_VALID(kind)) {
+                kind = -1;
+            }
+            if (kind != a->item_kind) {
+                Puppet_set_item(p, slot, kind, st.item_anim, st.item_frame);
+            } else if (st.item_anim != a->item_anim) {
+                Puppet_set_item_anim(p, slot, st.item_anim, st.item_frame);
+            } else if (p->item_keyframe.animation != NULL && (!a->have_seq || st.seq != a->seq)) {
+                Puppet_resync_frame(&p->item_keyframe.frame_control, st.item_frame);
+            }
+        }
         a->seq = st.seq;
         a->have_seq = 1;
     }
 
     cKF_SkeletonInfo_R_combine_play(&p->keyframe0, &p->keyframe1, p->part_table);
+    if (p->item_keyframe.skeleton != NULL && p->item_keyframe.animation != NULL) {
+        cKF_SkeletonInfo_R_play(&p->item_keyframe);
+    }
     Puppet_face_animation(actorx);
 }
 
-/* Draw just the body. Deliberately NOT Player_actor_draw_Normal: that path
- * runs per-joint callbacks for footprints, head turning, the held-item matrix
- * and the item-handover clip, all of which read state that belongs to the one
- * real player. A puppet has none of it, so it draws the skeleton with no
- * callbacks, binding its own resident's textures instead of the local
- * player's bank. */
+/* Draw the body and what is in its hand. Deliberately NOT
+ * Player_actor_draw_Normal: that path runs per-joint callbacks for
+ * footprints, head turning and the item-handover clip, all of which read
+ * state that belongs to the one real player. A puppet only records its hand
+ * and head joints (Puppet_draw_After) and binds its own resident's textures
+ * instead of the local player's bank. */
 static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
     int slot = actorx->actor_specific;
@@ -446,7 +625,8 @@ static void Puppet_actor_draw(ACTOR* actorx, GAME* game) {
     gSPSegment(POLY_OPA_DISP++, ANIME_5_TXT_SEG, face_pal);
     CLOSE_POLY_OPA_DISP(graph);
 
-    cKF_Si3_draw_R_SV(game, &p->keyframe0, p->work_mtx[buf_idx], NULL, NULL, p);
+    cKF_Si3_draw_R_SV(game, &p->keyframe0, p->work_mtx[buf_idx], NULL, &Puppet_draw_After, p);
+    Puppet_item_draw(actorx, game);
 }
 
 ACTOR_PROFILE Puppet_Profile = {
@@ -525,7 +705,7 @@ static int Puppet_npc_owner(GAME_PLAY* play, ACTOR* npc) {
     return best;
 }
 
-int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking) {
+int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking, int* act, int* flags) {
     GAME_PLAY* play = (GAME_PLAY*)gamePT;
     acnet_npc_state_t st;
     int from, owner;
@@ -547,6 +727,8 @@ int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, in
     *z = st.z;
     *angle_y = st.angle_y;
     *walking = st.walking;
+    *act = st.act;
+    *flags = st.flags;
     return 1;
 }
 
@@ -562,7 +744,7 @@ static void Puppet_npc_stream(GAME_PLAY* play) {
     }
     for (a = play->actor_info.list[ACTOR_PART_NPC].actor; a != NULL && n < ACNET_NPC_MAX; a = a->next_actor) {
         NPC_ACTOR* npc = (NPC_ACTOR*)a; /* every actor in this part is an NPC_ACTOR */
-        if (a->id != mAc_PROFILE_NORMAL_NPC || npc->condition_info.hide_flg) {
+        if (a->id != mAc_PROFILE_NORMAL_NPC) {
             continue;
         }
         if (Puppet_npc_owner(play, a) != self) {
@@ -575,6 +757,11 @@ static void Puppet_npc_stream(GAME_PLAY* play) {
         batch[n].y = a->world.position.y;
         batch[n].z = a->world.position.z;
         batch[n].walking = a->speed > 0.01f ? 1 : 0;
+        /* What it is doing, so the copies can do it too: hidden indoors, its
+         * current act (running, singing, clapping...), its umbrella. */
+        batch[n].act = (uint8_t)npc->action.idx;
+        batch[n].flags = (uint8_t)((npc->condition_info.hide_flg ? ACNET_NPC_FLAG_HIDDEN : 0) |
+                                   (npc->draw.sub_anim_type == aNPC_SUB_ANIM_UMBRELLA ? ACNET_NPC_FLAG_UMBRELLA : 0));
         n++;
     }
     if (n > 0) {
@@ -738,7 +925,9 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         st.anim0_frame = lp->keyframe0.frame_control.current_frame;
         st.anim1_frame = lp->keyframe1.frame_control.current_frame;
         st.anim_speed = lp->keyframe0.frame_control.speed;
-        st.item = (uint16_t)(u8)lp->item_kind;
+        st.item = mPlayer_ITEM_KIND_VALID(lp->item_kind) ? ACNET_ITEM_FROM_KIND(lp->item_kind) : ACNET_ITEM_NONE;
+        st.item_anim = (int16_t)lp->item_animation_idx[lp->item_bank_idx & 1];
+        st.item_frame = lp->item_keyframe.frame_control.current_frame;
         st.flags = Common_Get(player_bee_swell_flag) ? ACNET_STATE_FLAG_BEE_SWELL : 0;
         {
             ACTOR* talk = mDemo_Get_talk_actor();
@@ -763,6 +952,23 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
             pc_save_bswap_home(Save_GetPointer(homes[slot]), PC_BSWAP_FROM_BE);
             s_look[slot].valid = 0;
             OSReport("[puppet] resident %d's new character and house are now in this town\n", slot);
+        }
+    }
+
+    /* 1b'. And the other way round: our own character and house go out to
+     *      the others as soon as they change (a brand-new resident who has
+     *      never saved, a new shirt, moved furniture), without waiting for
+     *      a save. pc_net hashes the blocks and only sends real changes. */
+    if (Puppet_in_town(play) && local_slot < ACNET_MAX_PLAYERS && (play->game_frame % 60) == 30 &&
+        Puppet_slot_has_resident(local_slot)) {
+        static Private_c push_private ATTRIBUTE_ALIGN(32);
+        static mHm_hs_c push_home ATTRIBUTE_ALIGN(32);
+        memcpy(&push_private, Save_GetPointer(private_data[local_slot]), sizeof(push_private));
+        memcpy(&push_home, Save_GetPointer(homes[local_slot]), sizeof(push_home));
+        pc_save_bswap_private(&push_private, PC_BSWAP_TO_BE);
+        pc_save_bswap_home(&push_home, PC_BSWAP_TO_BE);
+        if (pc_net_push_own_blocks(&push_private, sizeof(push_private), &push_home, sizeof(push_home), 0)) {
+            OSReport("[puppet] sent my character and house to the other residents (they changed)\n");
         }
     }
 

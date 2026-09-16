@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 3 /* 3: villager sync; player state carries who they are talking to */
+#define ACNET_PROTOCOL_VERSION 4 /* 4: held items, house index, villager acts, resident push, town clock */
 #define ACNET_DEFAULT_PORT     7777
 
 #define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
@@ -94,7 +94,8 @@ enum acnet_msg {
     ACNET_MSG_CLAIM_SLOT     = 20,/* C->S  acnet_claim_slot_t: "my character is in save block N" */
     ACNET_MSG_SLOT           = 21,/* S->C  acnet_slot_t: your slot is now N */
     ACNET_MSG_WEATHER        = 22,/* C->S->C acnet_weather_t; relayed only from the world authority */
-    ACNET_MSG_NPC_STATE      = 23 /* C->S->C acnet_npc_hdr_t + count * acnet_npc_state_t (channel 1) */
+    ACNET_MSG_NPC_STATE      = 23,/* C->S->C acnet_npc_hdr_t + count * acnet_npc_state_t (channel 1) */
+    ACNET_MSG_RESIDENT_PUSH  = 24 /* C->S  acnet_resident_push_t + ACNET_RESIDENT_BLOB_SIZE bytes: my own blocks, now */
 };
 
 enum acnet_reject_reason {
@@ -148,6 +149,10 @@ typedef struct ACNET_PACKED {
     char    name[ACNET_NAME_LEN];
 } acnet_peer_t;
 
+/* The town has one clock: the server's wall clock (the server runs on the
+ * host's PC). server_unix_ms is UTC; server_tz_min is what the server's own
+ * local time adds to it, so a client can line its game clock up with the
+ * host's local time even from another time zone. */
 typedef struct ACNET_PACKED {
     uint8_t  client_id;
     uint8_t  slot;
@@ -156,7 +161,8 @@ typedef struct ACNET_PACKED {
     uint32_t town_version;
     int64_t  server_unix_ms;
     uint8_t  peer_count;
-    uint8_t  reserved[3];
+    int16_t  server_tz_min;  /* minutes to add to UTC for the server's local time */
+    uint8_t  reserved;
     acnet_peer_t peers[ACNET_MAX_PLAYERS];
 } acnet_welcome_t;
 
@@ -239,8 +245,14 @@ typedef struct ACNET_PACKED {
     int16_t  angle_y;
     float    x, y, z;
     uint8_t  walking;
-    uint8_t  reserved[3];
+    uint8_t  act;         /* the owner's current act (aNPC_ACT_*), so a copy can run too, or 0xFF */
+    uint8_t  flags;       /* ACNET_NPC_FLAG_* */
+    uint8_t  reserved;
 } acnet_npc_state_t;
+
+#define ACNET_NPC_FLAG_HIDDEN   0x01 /* inside its house (or otherwise not in the field) */
+#define ACNET_NPC_FLAG_UMBRELLA 0x02 /* holding its umbrella open */
+#define ACNET_NPC_ACT_NONE      0xFF
 
 #define ACNET_GROW_TIME_SIZE 16
 typedef struct ACNET_PACKED {
@@ -260,6 +272,8 @@ typedef struct ACNET_PACKED {
 typedef struct ACNET_PACKED {
     uint32_t nonce;
     int64_t  server_unix_ms;
+    int16_t  server_tz_min;
+    uint8_t  reserved[2];
 } acnet_pong_t;
 
 typedef struct ACNET_PACKED {
@@ -300,6 +314,18 @@ typedef struct ACNET_PACKED {
     uint8_t  reserved[3];
     uint32_t town_version;
 } acnet_resident_data_t;
+
+/* The other direction, without a save: a game pushes its OWN two blocks
+ * (same layout, big-endian) whenever they change -- a brand-new character
+ * that has never been saved, a new shirt, moved furniture. The server writes
+ * them into the stored town (only that resident's blocks, which are theirs
+ * alone; the town version is not bumped), marks the resident as having
+ * saved so the blocks are protected from other residents' uploads, and
+ * relays them as RESIDENT_DATA. Rate limited by the client. */
+typedef struct ACNET_PACKED {
+    uint8_t  slot;        /* must be the sender's own slot */
+    uint8_t  reserved[3];
+} acnet_resident_push_t;
 
 /* Land relay (step 3). A client sends the field-item cells that changed in
  * its town since the last frame, whatever changed them: a chopped tree, a
@@ -357,12 +383,21 @@ typedef struct ACNET_PACKED {
     float    anim0_frame;
     float    anim1_frame;
     float    anim_speed;
+    /* What is in their hand: the player's item kind (mPlayer_ITEM_KIND_*)
+     * plus one, so 0 means empty hands; and the tool's own animation (an
+     * index into the player's item data table) with its frame, for the net
+     * and the rod, which bend. */
     uint16_t item;
+    int16_t  item_anim;
+    float    item_frame;
+    uint16_t talk_npc;        /* npc_id of the villager this player is talking to, 0 if none */
     uint8_t  emote;
     uint8_t  reserved;
-    uint16_t talk_npc;        /* npc_id of the villager this player is talking to, 0 if none */
-    uint8_t  reserved2[2];
 } acnet_player_state_t;
+
+#define ACNET_ITEM_NONE 0
+#define ACNET_ITEM_FROM_KIND(k) ((uint16_t)((k) + 1))
+#define ACNET_ITEM_TO_KIND(v)   ((int)(v) - 1)
 
 #define ACNET_STATE_FLAG_BEE_SWELL 0x01 /* face swollen by a bee sting; live state, not in the save */
 
@@ -370,9 +405,15 @@ typedef struct ACNET_PACKED {
  * have no game headers. m_puppet.c_inc checks the value at compile time. */
 #define ACNET_PLAYER_ANIM_WAIT 0
 
-/* acnet_player_state_t.area is the game's scene id; this is the outdoor town
- * (SCENE_FG), again for tools without the headers and checked at compile time. */
+/* acnet_player_state_t.area: the low byte is the game's scene id and, for the
+ * scenes that several places share (a resident's house rooms, a villager's
+ * house), the next 16 bits say WHICH house (its index or owner + 1), so two
+ * residents in two different houses of the same size are not drawn in each
+ * other's rooms. The outdoor town is SCENE_FG, listed here for tools without
+ * the headers and checked at compile time. */
 #define ACNET_AREA_FIELD 7
+#define ACNET_AREA_MAKE(scene, house_plus_one) ((uint32_t)(scene) | ((uint32_t)(house_plus_one) << 8))
+#define ACNET_AREA_SCENE(area) ((area) & 0xFF)
 
 #define ACNET_MAX_PAYLOAD (sizeof(acnet_hdr_t) + sizeof(acnet_welcome_t))
 

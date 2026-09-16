@@ -10,6 +10,9 @@
 #define AC_PUPPET_H
 
 #include "m_actor.h"
+#ifdef TARGET_PC
+#include "protocol.h" /* ACNET_NPC_FLAG_*, for the villager follow code */
+#endif
 
 extern ACTOR_PROFILE Puppet_Profile;
 
@@ -20,8 +23,10 @@ extern void Puppet_net_update_local(ACTOR* player_actor, GAME* game);
 
 /* Villager sync. Asked by a villager every frame: 1 if another resident's game
  * owns this villager right now and has told us where it is (position, facing,
- * whether it is walking); the villager then follows that instead of its own
- * decisions. 0: run the normal AI (we own it, or nobody does). */
-extern int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking);
+ * whether it is walking, its act and ACNET_NPC_FLAG_* flags); the villager
+ * then follows that instead of its own decisions. 0: run the normal AI (we
+ * own it, or nobody does). */
+extern int Puppet_npc_remote(ACTOR* npc, float* x, float* y, float* z, int* angle_y, int* walking, int* act,
+                             int* flags);
 
 #endif /* AC_PUPPET_H */

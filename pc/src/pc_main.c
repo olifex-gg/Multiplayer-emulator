@@ -12,6 +12,7 @@
 #include "pc_disc.h"
 #include "pc_net.h"
 #include "pc_typing.h"
+#include "pc_chat.h"
 #include "pc_pause_menu.h"
 #include "pc_settings_menu.h"
 #include "pc_profiler.h"
@@ -187,6 +188,10 @@ int pc_platform_poll_events(void) {
                     pc_settings_menu_handle_capture_event(&event);
                     break;
                 }
+                if (g_pc_chat_typing) {
+                    pc_chat_handle_event(&event); /* the chat line owns the keyboard */
+                    break;
+                }
                 if (event.key.keysym.sym == SDLK_F3 && !event.key.repeat) {
                     pc_speedhack_toggle();
                     break;
@@ -202,6 +207,9 @@ int pc_platform_poll_events(void) {
                 if (g_pc_paused) {
                     pc_pause_menu_handle_event(&event);
                     break; /* swallow all keys while paused */
+                }
+                if (pc_chat_handle_event(&event)) {
+                    break; /* T opened the chat line */
                 }
                 pc_typing_handle_event(&event);
                 break;
@@ -233,8 +241,15 @@ int pc_platform_poll_events(void) {
                     pc_pause_menu_handle_event(&event);
                 }
                 break;
+            case SDL_KEYUP:
+                pc_chat_handle_event(&event); /* releases the key that closed the chat line */
+                break;
             case SDL_TEXTINPUT:
                 if (g_pc_paused) break;
+                if (g_pc_chat_typing) {
+                    pc_chat_handle_event(&event);
+                    break;
+                }
                 pc_typing_handle_event(&event);
                 break;
         }

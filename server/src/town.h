@@ -64,6 +64,14 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob);
  * caller persists later with town_flush(). */
 int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item);
 
+/* A resident pushed their own two blocks (Private_c then mHm_hs_c, big-endian,
+ * ACNET_RESIDENT_BLOB_SIZE bytes) without saving. Writes them into the stored
+ * town, marks the resident as having uploaded (so other residents' uploads
+ * can no longer overwrite the blocks) and writes the town to disk. The
+ * version is not bumped. Returns 1 if stored, 0 when there is no town yet
+ * (the caller may still relay the blocks) or on a bad slot. */
+int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob);
+
 /* Recompute the checksum, mirror main -> backup and write the town to disk.
  * Used after live land edits; does not bump the version or rotate backups. */
 int town_flush(town_t* t);
