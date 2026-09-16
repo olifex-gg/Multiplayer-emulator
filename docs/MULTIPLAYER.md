@@ -371,3 +371,16 @@ be *in* the town. The server keeps everyone else on a roster:
 - **What a running game sees.** When a seat changes hands the server relays the seat's
   new blocks to everyone in town, so the old resident's puppet and house become the
   blank (or returning) ones without a reload.
+
+## The second house acre
+
+Houses 4-7 stand in a second acre made when a town is created or, for a town from the
+four-resident days, the first time the new build plays it. It is the flat acre next to
+the original house acre (west first: B-2 in every town the game generates, which is what
+the user's town got), never one a villager lives in, and it keeps its own grass: only the
+houses, their fences, mailboxes and gyroids are put on it. There is no stone walkway,
+because every house-acre ground model on the disc leads north to a station and a walkway
+ending at the acre's edge looked wrong; the combinations for "grass + houses" are the
+fork's own rows at the end of `data_combi.c`, hidden from the town generator. A new
+resident is led by Nook to the original acre; if it is full they walk to the second acre
+and pick a house there.

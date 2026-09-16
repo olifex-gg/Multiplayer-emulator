@@ -372,6 +372,25 @@ mFM_combo_info_c data_combi_table[] = {
     { BG_TYPE_GRD_S_O_WF_2, FG_TYPE_EMPTY, mFM_BLOCK_TYPE_OCEAN_8 },
     { BG_TYPE_GRD_S_O_WF_3, FG_TYPE_EMPTY, mFM_BLOCK_TYPE_OCEAN_8 },
     { BG_TYPE_ROM_TENT, FG_TYPE_ROM_TENT, mFM_BLOCK_TYPE_NONE },
+    /* Multiplayer fork: the second house acre on plain grass -- a flat
+     * acre's own ground with the house layout's items (houses 4-7 once the
+     * ids are remapped), one per flat ground variant so the acre keeps the
+     * look it had. These are not on the disc; the town generator never sees
+     * them (data_combi_table_rom_number stops before them), so a new town's
+     * first house acre keeps its walkway to the station. */
+    { BG_TYPE_GRD_S_F_1, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_2, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_3, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_4, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_5, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_6, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_7, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_8, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_9, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
+    { BG_TYPE_GRD_S_F_10, FG_TYPE_0069, mFM_BLOCK_TYPE_PLAYER_HOUSE },
 };
 
+#define DATA_COMBI_GRASS_HOUSE_NUM 10
+
 int data_combi_table_number = ARRAY_COUNT(data_combi_table);
+int data_combi_table_rom_number = ARRAY_COUNT(data_combi_table) - DATA_COMBI_GRASS_HOUSE_NUM;

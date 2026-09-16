@@ -32,6 +32,11 @@ void pc_save_convert_fixup_loaded(void);
  * run on the first play frame after a conversion; a no-op otherwise. */
 void pc_save_convert_late_fixup(void);
 
+/* Right before the outdoor field is first built: a town without a second
+ * house acre gets one (it needs the disc's field data, so not at load time,
+ * and it must come before the field so a neighbouring acre is safe). */
+void pc_save_convert_pre_field(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -70,6 +70,9 @@ extern int mRF_CheckFieldStep3();
 
 extern mFM_combo_info_c data_combi_table[];
 extern int data_combi_table_number;
+/* The combinations the disc knows (the town generator draws only from these);
+ * the multiplayer fork's grass house-acre combinations follow them. */
+extern int data_combi_table_rom_number;
 
 #ifdef __cplusplus
 }

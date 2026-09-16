@@ -488,6 +488,9 @@ extern void play_init(GAME* game) {
         my_malloc_current = &my_malloc_func;
     }
 
+#ifdef TARGET_PC
+    pc_save_convert_pre_field(); /* a converted town's second house acre, before the field is built */
+#endif
     mFM_FieldInit(play);
     VR_Box_ct(play);
     mMmd_MakeMuseumDisplayData();

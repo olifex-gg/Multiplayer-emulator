@@ -1404,12 +1404,15 @@ static void mFM_SetBlockKind(u8* type_p, int* kind_p, mFM_combination_c* combi_p
 }
 
 /* Multiplayer fork: the second player-house acre, for houses 4-7. The first
- * house acre is fixed at block (3,2) and every "find the house acre" scan
- * returns the first match in row order, so the second one is placed after it
- * in that order: rows below first, then to its right. It takes one of the
- * house-acre combinations (a different look from the first acre's), that
- * combination's item template with the ids of houses 4-7, and no buried
- * items. Nothing else about the town changes. */
+ * house acre is fixed at block (3,2); the second goes on the flat acre next
+ * to it -- west first (B-2 in every generated town), then east, then below,
+ * then further away -- never one a villager lives in. The acre keeps its own
+ * grass ground (the matching combination at the end of data_combi_table,
+ * so there is no walkway ending at the acre's edge) and takes the house
+ * layout's items with the ids of houses 4-7, and no buried items. Whatever
+ * stood on that acre (trees, dropped items) is gone. Nothing else about the
+ * town changes. Every "find the house acre" scan returns the first match in
+ * row order, which is still the first acre. */
 static void mFM_RemapHouseIds(mActor_name_t* items, int count) {
     int i;
     for (i = 0; i < count; i++) {
@@ -1445,13 +1448,13 @@ static int mFM_BlockHasVillagerHouse(int bx, int bz) {
 }
 
 extern int mFM_MakeSecondHouseAcre(void) {
-    static const int order[][2] = { /* bx, bz: after the first acre in row order, and not next to
-                                     * it (a loaded neighbour would be rebuilt under its actors) */
+    static const int order[][2] = { /* bx, bz: the first acre's neighbours first (it is made before
+                                     * the field is built, so a loaded neighbour is no problem) */
+        { 2, 2 }, { 4, 2 }, { 3, 3 }, { 2, 3 }, { 4, 3 },
+        { 1, 2 }, { 5, 2 }, { 1, 3 }, { 5, 3 },
         { 3, 4 }, { 2, 4 }, { 4, 4 }, { 1, 4 }, { 5, 4 },
         { 3, 5 }, { 2, 5 }, { 4, 5 }, { 1, 5 }, { 5, 5 },
-        { 1, 3 }, { 5, 3 }, { 5, 2 },
         { 3, 6 }, { 2, 6 }, { 4, 6 }, { 1, 6 }, { 5, 6 },
-        { 2, 3 }, { 4, 3 }, { 3, 3 }, { 4, 2 },
     };
     int first_combi = Save_Get(combi_table[mHS_FIRST_HOUSE_ACRE_BZ][mHS_FIRST_HOUSE_ACRE_BX]).combination_type;
     int bx, bz, i, chosen_bx = -1, chosen_bz = -1, combi_idx = -1;
@@ -1489,10 +1492,25 @@ extern int mFM_MakeSecondHouseAcre(void) {
         OSReport("[town] no plain flat acre left for a second house acre\n");
         return FALSE;
     }
-    for (i = 0; i < data_combi_table_number; i++) {
+    /* Plain grass under the houses: the acre keeps its own ground and takes
+     * the house layout's items. The combination for that (this ground +
+     * the house items) is one of the fork's own at the end of the table.
+     * Only if the ground has no such entry, a house-acre variant. */
+    {
+        int own_combi = Save_Get(combi_table[chosen_bz][chosen_bx]).combination_type;
+        mActor_name_t own_bg = (own_combi >= 0 && own_combi < data_combi_table_number)
+                                   ? data_combi_table[own_combi].bg_id
+                                   : (mActor_name_t)EMPTY_NO;
+        for (i = data_combi_table_rom_number; i < data_combi_table_number; i++) {
+            if (data_combi_table[i].type == mFM_BLOCK_TYPE_PLAYER_HOUSE && data_combi_table[i].bg_id == own_bg) {
+                combi_idx = i;
+                break;
+            }
+        }
+    }
+    for (i = 0; i < data_combi_table_rom_number && combi_idx < 0; i++) {
         if (data_combi_table[i].type == mFM_BLOCK_TYPE_PLAYER_HOUSE && i != first_combi) {
             combi_idx = i;
-            break;
         }
     }
     if (combi_idx < 0) combi_idx = first_combi;
@@ -1531,11 +1549,12 @@ extern int mFM_MakeSecondHouseAcre(void) {
     }
     zelda_free(fg_data_p);
     Save_Get(combi_table[chosen_bz][chosen_bx]).combination_type = combi_idx;
-    if (mFI_CheckFieldData()) {
-        mFM_SetBlockKindLoadCombi(); /* the runtime acre-kind table follows the save */
-    }
-    OSReport("[town] second house acre made at block (%d,%d) with combination %d (houses 4-7)\n", chosen_bx, chosen_bz,
-             combi_idx);
+    /* The runtime acre type/kind tables (static arrays, so always there)
+     * follow the save at once: the map, the house-acre lookups and the
+     * field build all read them. */
+    mFM_SetBlockKindLoadCombi();
+    OSReport("[town] second house acre made at block (%d,%d) with combination %d (houses 4-7%s)\n", chosen_bx,
+             chosen_bz, combi_idx, combi_idx >= data_combi_table_rom_number ? ", on its own grass" : "");
     return TRUE;
 }
 
@@ -1613,7 +1632,7 @@ extern void mFM_InitFgCombiSaveData(GAME* game) {
     }
 
     combo_info_p = data_combi_table;
-    mRF_MakeRandomField(l_combiID, combo_info_p, data_combi_table_number, game);
+    mRF_MakeRandomField(l_combiID, combo_info_p, data_combi_table_rom_number, game);
     mFM_SetBlockKind(g_block_type_p, g_block_kind_p, l_combiID, combo_info_p, BLOCK_TOTAL_NUM);
     mFM_SetCombiTable(combi_table, l_combiID, BLOCK_X_NUM, BLOCK_Z_NUM);
     fg_datasize = JW_GetResSizeFileNo(RESOURCE_FGDATA);

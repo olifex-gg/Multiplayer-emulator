@@ -311,7 +311,6 @@ extern void pc_save_convert_fixup_loaded(void) {
 }
 
 extern void pc_save_convert_late_fixup(void) {
-    static int s_acre_checked;
     int i;
 
     if (s_late_fixup_pending) {
@@ -321,8 +320,15 @@ extern void pc_save_convert_late_fixup(void) {
         }
         OSReport("[save] eight-resident town: the new houses' gyroid messages loaded\n");
     }
+}
+
+extern void pc_save_convert_pre_field(void) {
+    static int s_acre_checked;
+
     /* Any town without a second house acre gets one (a converted town, or
-     * one saved by the first eight-resident build); a no-op otherwise. */
+     * one saved by the first eight-resident build); a no-op otherwise. Done
+     * before the field is built so the acre may be the start acre's
+     * neighbour. Once per session, on the first outdoor field. */
     if (!s_acre_checked && Save_Get(scene_no) == SCENE_FG) {
         s_acre_checked = TRUE;
         mFM_MakeSecondHouseAcre();

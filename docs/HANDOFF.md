@@ -309,13 +309,22 @@ Stage 1, done and tested: the save, the server, the tools.
   and gyroid-voice tables grew to match) and `HOUSE_ID/HOUSE_IDX`, `MAILBOX_ID/IDX`,
   `HANIWA_ID/IDX`, `DUMMY_*_ID`, `ITEM_IS_PLAYER_HOUSE`, `ITEM_IS_DUMMY_MAILBOX` in
   `m_name_table.h` are the only way code converts between a house index and an id. The
-  acre itself: `mFM_MakeSecondHouseAcre` (m_field_make.c) picks the first plain flat acre
-  after block (3,2) in row order and not next to it, gives it a house-acre combination
-  (a different look from the first acre's), copies that combination's item template from
-  the ROM with the ids of houses 4-7, clears its buried items and refreshes the acre-kind
-  table. It runs at town creation (`m_start_data_init`) and once per session on the first
-  play frame (`pc_save_convert_late_fixup`), so a town saved by any earlier build gets its
-  acre the first time it is played. `mHS_house_acre_block(1, ...)` finds it (the other
+  acre itself: `mFM_MakeSecondHouseAcre` (m_field_make.c) takes the flat acre next to
+  block (3,2) -- west first (B-2 in every generated town), then east, then below, then
+  further away -- skipping any acre a villager lives in. The acre keeps its own grass
+  ground: `data_combi.c` ends with one combination per flat ground variant (that ground +
+  the house layout's items `FG_TYPE_0069`, type PLAYER_HOUSE) past
+  `data_combi_table_rom_number`, which is what the town generator is given, so a new
+  town's first house acre still gets a walkway to the station. The house layout's items
+  (houses, mailboxes, gyroids, fences, a few trees) are copied from the ROM template with
+  the ids of houses 4-7; whatever stood on the acre (trees, dropped items, buried items)
+  is gone, and the acre-kind table is refreshed at once (it is a static array). It runs
+  at town creation (`m_start_data_init`) and once per session right before the first
+  outdoor field is built (`pc_save_convert_pre_field`, called from `play_init`), so a
+  town saved by any earlier build gets its acre the first time it is played, and a
+  neighbour of the start acre is safe to rebuild. (The user chose this over a walkway
+  acre: the house-acre ground models all lead north to a station, so a walkway ends at
+  the acre's edge. Rotating the acre was ruled out: houses always face south.) `mHS_house_acre_block(1, ...)` finds it (the other
   acre of type `mFM_BLOCK_TYPE_PLAYER_HOUSE`), `mHS_house_origin(house)` gives the acre's
   world origin, and every table of door/gyroid/mailbox positions is now an offset from
   that origin (`ac_npc_restart_schedule`, `ac_npc_p_sel2_talk`, `ac_haniwa_move`,
@@ -356,7 +365,8 @@ Stage 1, done and tested: the save, the server, the tools.
   acre that becomes the second house acre is chosen among flat acres with **no villager
   house** (cells 0x5000-0x50FF) first, so nobody loses a home; in the user's town C-1 had
   none. The walkway in a house acre is part of its ground model (all three variants lead
-  north, to a station), so it cannot be joined to anything without a new model.
+  north, to a station), so it cannot be joined to anything without a new model; that is
+  why the second acre now keeps its own grass instead.
 - *Fixed: a black screen while Nook talked after the look inside.* `aID_birth_rcn_guide`
   re-spawns Nook next to the house after the player comes out, and its block was the
   literal first house acre (3, 2): in the second acre Nook stood two acres away, and the
