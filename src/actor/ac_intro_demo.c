@@ -49,6 +49,17 @@ ACTOR_PROFILE Intro_Demo_Profile = {
 
 static mDemo_Clip_c aID_clip;
 
+extern int aID_IntroAtStation(void) {
+    mDemo_Clip_c* clip = Common_Get(clip).demo_clip;
+    INTRO_DEMO_ACTOR* intro_demo;
+
+    if (clip == NULL || clip->type != mDemo_CLIP_TYPE_INTRO_DEMO || clip->demo_class == NULL) {
+        return FALSE;
+    }
+    intro_demo = (INTRO_DEMO_ACTOR*)clip->demo_class;
+    return intro_demo->action <= aID_ACT_GO_OUT_OF_STATION;
+}
+
 static void aID_setupAction(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play, int action);
 
 static void aID_actor_ct(ACTOR* actorx, GAME* game) {

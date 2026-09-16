@@ -52,6 +52,12 @@ struct actor_intro_demo_s {
 
 extern ACTOR_PROFILE Intro_Demo_Profile;
 
+/* Multiplayer fork: TRUE while a new resident's intro is still at the
+ * station (on the train, on the platform, walking out) -- before Nook
+ * appears. Porter keys his arrival routine on this rather than on the
+ * first-intro flag, which stays set until a house is chosen. */
+extern int aID_IntroAtStation(void);
+
 #ifdef __cplusplus
 }
 #endif

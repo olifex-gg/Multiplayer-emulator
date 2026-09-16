@@ -1,3 +1,4 @@
+static int aSTM_first_intro_arrival(void); /* multiplayer fork, defined below */
 static void aSTM_Change_sound(NPC_STATION_MASTER_ACTOR* actor, u8 sound) {
     if (actor->sound != sound) {
         mBGMPsComp_make_ps_demo(sound, 0x168);
@@ -100,7 +101,7 @@ static void aSTM_get_off_wait(NPC_STATION_MASTER_ACTOR* actor, GAME_PLAY* play) 
                     INTRO_DEMO_ACTOR* demo_actor = (INTRO_DEMO_ACTOR*)demox;
 
                     // train1 arg0 is passenger flag
-                    if (mEv_CheckFirstIntro() && demo_actor->train1_actor_p != NULL && !demo_actor->train1_actor_p->arg0) {
+                    if (aSTM_first_intro_arrival() && demo_actor->train1_actor_p != NULL && !demo_actor->train1_actor_p->arg0) {
                         if (mPlib_get_player_actor_main_index((GAME*)play) != mPlayer_INDEX_DEMO_GETOFF_TRAIN) {
                             aSTM_setup_think_proc(actor, play, aSTM_THINK_TURN);
                         }
@@ -144,7 +145,7 @@ static void aSTM_interrupt_move(NPC_STATION_MASTER_ACTOR* actor, GAME_PLAY* play
     u8 think_idx = aSTM_THINK_9;
 
     mEv_UnSetGateway();
-    if (mEv_CheckFirstIntro() == TRUE) {
+    if (aSTM_first_intro_arrival()) {
         think_idx = aSTM_THINK_4;
     } else if (Common_Get(player_no) < mPr_FOREIGNER) {
         think_idx = aSTM_THINK_8;
@@ -285,7 +286,7 @@ static void aSTM_think_init_proc(NPC_ACTOR* nactorx, GAME_PLAY* play) {
     u8 think_idx;
     ACTOR* actorx = (ACTOR*)actor;
 
-    if (mEv_CheckFirstIntro() == TRUE || Actor_info_name_search(&play->actor_info, mAc_PROFILE_RIDE_OFF_DEMO, ACTOR_PART_CONTROL) != NULL) {
+    if (aSTM_first_intro_arrival() || Actor_info_name_search(&play->actor_info, mAc_PROFILE_RIDE_OFF_DEMO, ACTOR_PART_CONTROL) != NULL) {
         think_idx = aSTM_THINK_GET_OFF_WAIT;
         actorx->shape_info.rotation.y += DEG2SHORT_ANGLE2(-90.0f);
         actorx->world.angle.y += DEG2SHORT_ANGLE2(-90.0f);
@@ -434,6 +435,16 @@ static aSTM_THINK_INIT_PROC init_table[] = {
       aSTM_game_end_init,
 };
 // clang-format on
+
+/* Multiplayer fork: a new resident whose house acre is elsewhere may walk
+ * back through the station while choosing a house. Porter treats them as
+ * arriving only while the intro is actually at the station; afterwards they
+ * are just a resident on their first job. (The original's fences kept a
+ * newcomer out of the station until the house was chosen, so it only ever
+ * looked at the first-intro flag.) */
+static int aSTM_first_intro_arrival(void) {
+    return mEv_CheckFirstIntro() == TRUE && aID_IntroAtStation();
+}
 
 static void aSTM_setup_think_proc(NPC_STATION_MASTER_ACTOR* actor, GAME_PLAY* play, u8 think_idx) {
     aSTM_think_data_c* data_p = &dt_tbl[think_idx];

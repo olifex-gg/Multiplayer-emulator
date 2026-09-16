@@ -338,15 +338,45 @@ Stage 1, done and tested: the save, the server, the tools.
   the question is first asked. The delete flow's special four-name pager is bypassed. Seen
   on the rig: a fifth game (Eve) joining a four-resident town got slot 4 from the server,
   saw "Owen / Alana / Cara / Dan / I'm new", and rode the train in as a new resident.
-- *A fifth resident, end to end (seen on the rig).* Eve, a fifth game on a four-resident
-  town: slot 4 from the server, "I'm new" on the paged menu, Rover's train, Porter, Nook
-  outside the station, and Nook's walk led her straight to the second house acre (C-1 in
-  the test town) because her arranged house is there. She chose the top-right house
-  (house 5), the door demo ran, "Welcome home, eve!" from the gyroid, first job started.
-  The intro's steps are logged as `[intro] step N (player P, first intro F)`; Porter's
-  states as `[porter] think N`. During the door demo the view was black except a blue
-  quad (the camera centres on the house actor's eye, which is right, so this may be the
-  port's normal look for that demo; unverified against a first-acre intro).
+- *A fifth resident, end to end (seen on the rig three times).* Eve, a fifth game on a
+  four-resident town: slot 4 from the server, "I'm new" on the paged menu, Rover's train,
+  Porter, Nook outside the station. Nook's guided walk ends in the **first** house acre
+  as it always did (B-3 in the test town); because that acre is full the intro leaves the
+  acre open (`aID_decide_house_init`) and the player walks to the second acre (C-1, two
+  acres west and one south) on their own. Nook follows. At a free house's door she
+  pressed A, Nook offered it, she looked inside, took it, the intro's step 11 gave her
+  the house (`mHS_set_use`), the gyroid says "Welcome home, eve!", the first job
+  started, and her push carried the house index so the stored town shows the house as
+  hers and Owen's running game took her character and house live. The intro's steps are
+  logged as `[intro] step N (player P, first intro F)`; Porter's states as
+  `[porter] think N`.
+- *Fixed: a black screen while Nook talked after the look inside.* `aID_birth_rcn_guide`
+  re-spawns Nook next to the house after the player comes out, and its block was the
+  literal first house acre (3, 2): in the second acre Nook stood two acres away, and the
+  talk camera aimed at unloaded land (black, with a sliver of ground). The same talk in
+  the first acre drew normally. He is now placed in the house's own acre
+  (`mHS_house_acre_block`).
+- *Fixed: frozen at the station while choosing a house.* With the first acre full the
+  newcomer roams; walking back into the station acre when a train came in made Porter run
+  his arrival routine on them (`aSTM_interrupt_move` and his think init keyed on the
+  first-intro flag, which stays set until the house is chosen) and the player stayed in a
+  demo wait for good. Porter now asks `aID_IntroAtStation()` -- the intro demo's step is
+  still on the platform side of Nook's appearance -- so a newcomer wandering back is just
+  a resident on their first job to him.
+- *The door press, for anyone driving the game by script.* The original game's door
+  check (`aMHS_check_player_sub`) wants the player within 40 units of the doorstep AND
+  facing strictly between north and east for a right-hand house, strictly between north
+  and west for a left-hand one -- exactly north is refused, and facing the gyroid (east)
+  talks to it instead. Real players never notice; a script needs two keys down at once
+  (`gamekeys.ps1 pdown W; pdown D; ... pup`) for the diagonal.
+- *Rig scripts in `D:\Downloads\ACPC-test` (not in the repo).* `namemenu.ps1` (pixel
+  detection of the station's name menu), `advance.ps1` (press A until a choice window is
+  up), `eve_intro.ps1` (Rover's train questions for a new resident), `arrive.ps1` (Rover's
+  last answer, the platform, walking off, Nook's greeting and his guided walk),
+  `house.ps1` (from "take a good look inside" through the mortgage speech to step 12; the
+  first answer to every question is the right one). Eve's copy is `ACPC-test3`; delete
+  its `save\card_a\*.gci` before each run so she is new again, and reset the server's
+  town from `town.gci.four-residents` / `town.gci.two-residents` and its `residents.txt`.
 - *Stage 4, the roster, done (server + protocol 8).* See MULTIPLAYER.md "Seats and the
   roster". The push and the relay now say which `homes[]` block the house half is
   (`house` byte = the resident's `house_arrangement` entry). Before this the game pushed

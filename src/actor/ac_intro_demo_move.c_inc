@@ -112,8 +112,12 @@ static void aID_birth_rcn_guide(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play) {
         } else {
             param = aID_STATE_FREE_HOUSE;
         }
-        data = 3;
-        type = 2;
+        /* `data`, `type` are the block Nook is placed in: the acre this house
+         * is in (multiplayer fork: the second acre's houses are elsewhere;
+         * the original always used the first house acre, 3, 2). */
+        data = mHS_FIRST_HOUSE_ACRE_BX;
+        type = mHS_FIRST_HOUSE_ACRE_BZ;
+        mHS_house_acre_block(house_idx / mHS_HOUSES_PER_ACRE, &data, &type);
     } else {
         data = 3;
         type = 1;
