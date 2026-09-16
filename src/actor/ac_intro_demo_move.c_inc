@@ -252,8 +252,17 @@ static void aID_walk_after_rcn_guide_init(INTRO_DEMO_ACTOR* intro_demo, GAME_PLA
 }
 
 static void aID_decide_house_init(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play) {
-    mPlib_Set_unable_wade(TRUE);     /* We can't switch acres */
-    mCoBG_ChangeBlockBgCheckMode(1); /* Acre BG check mode altered */
+    /* Multiplayer fork: Nook brings a new resident to the first house acre.
+     * While it has a free house the player is kept there, as always; once
+     * its four are taken (a fifth resident and up) the acre stays open so
+     * they can walk to the second house acre and pick a house there. */
+    if (mHS_acre_has_free_house(0) || !mHS_acre_has_free_house(1)) {
+        mPlib_Set_unable_wade(TRUE);     /* We can't switch acres */
+        mCoBG_ChangeBlockBgCheckMode(1); /* Acre BG check mode altered */
+    } else {
+        mPlib_Set_unable_wade(FALSE);
+        mCoBG_ChangeBlockBgCheckMode(0);
+    }
 }
 
 static void aID_retire_rcn_guide_wait_init(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play) {
@@ -300,6 +309,9 @@ static void aID_init_proc(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play, int act
 }
 
 static void aID_setupAction(INTRO_DEMO_ACTOR* intro_demo, GAME_PLAY* play, int act) {
+#ifdef TARGET_PC
+    OSReport("[intro] step %d (player %d, first intro %d)\n", act, (int)Common_Get(player_no), mEv_CheckFirstIntro());
+#endif
     // clang-format off
     static aID_ACT_PROC process[] = {
         &aID_first_set,

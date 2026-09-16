@@ -1,3 +1,4 @@
+#include "m_field_info.h"
 #include "ac_npc_rcn_guide.h"
 
 #include "m_play.h"

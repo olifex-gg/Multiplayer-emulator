@@ -328,10 +328,18 @@ Stage 1, done and tested: the save, the server, the tools.
   town holds `0x5853-0x5856`, `0xA013-0xA016`, `0xA017-0xA01A` in that acre's cells with no
   runtime ids. The map's "press X" page is the town map; the menu's L/R only cycle the
   right-hand tabs.
-- *Still to do*: the name menu at the station (`ac_npc_p_sel2_talk.c_inc` builds at most
-  four names + "I'm new" in a six-entry choice window -- page it like the card list; today
-  a fifth name cannot be chosen and a full town shows an empty menu), a fifth resident
-  moving into the second acre end to end, then option C's seats.
+- *Stage 3, the station's name menu, done.* `aNPS2_set_choice_str` (ac_npc_p_sel2_talk.c_inc)
+  builds one list for any number of residents: up to five names on one page with the extra
+  entry, otherwise pages of four names plus "Other residents" (ROM string 0x1B9, wraps),
+  and "I'm new" while a slot is free (or "Never mind" in the delete flow). It uses all six
+  rows of the choice window (the original passed four). `name_choice_map` on the actor says
+  what each row means (-1 the extra entry, -2 the page turn) and `aNPS2_select_player` /
+  `aNPS2_chk_clr_pl_data` act on that instead of the row number; `name_page` resets when
+  the question is first asked. The delete flow's special four-name pager is bypassed. Seen
+  on the rig: a fifth game (Eve) joining a four-resident town got slot 4 from the server,
+  saw "Owen / Alana / Cara / Dan / I'm new", and rode the train in as a new resident.
+- *Still to do*: a fifth resident moving into the second acre end to end (the intro walk
+  and Nook's house pick with only the second acre's houses free), then option C's seats.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

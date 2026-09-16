@@ -28,6 +28,10 @@ struct npc_p_sel2_s {
     int card_player_next_choice_idx;
     int passport_slot;
     u8 start_flag;
+    /* multiplayer fork: the name menu pages through up to eight residents */
+    s8 name_page;                          /* which four names are showing */
+    s8 name_choice_map[6];                 /* per row: list index of a resident, -1 the extra entry
+                                            * ("I'm new" / "Never mind"), -2 "Other residents" */
 };
 
 extern ACTOR_PROFILE Npc_P_Sel2_Profile;

@@ -21,6 +21,18 @@ extern int mHS_house_origin(int house_no, f32* ox, f32* oz) {
     return ok;
 }
 
+extern int mHS_acre_has_free_house(int acre) {
+    int i;
+
+    for (i = 0; i < mHS_HOUSES_PER_ACRE; i++) {
+        int house = acre * mHS_HOUSES_PER_ACRE + i;
+        if (house < mHS_HOUSE_NUM && mPr_NullCheckPersonalID(&Save_Get(homes[house]).ownerID) == TRUE) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 extern int mHS_house_acre_of_block(int bx, int bz) {
     int abx, abz;
 

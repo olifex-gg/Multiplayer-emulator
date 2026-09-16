@@ -290,35 +290,77 @@ static void aNPS2_copy_hokanohito(NPC_P_SEL2_ACTOR* p_sel2, u8* str) {
     mChoice_Load_ChoseStringFromRom(choice_win, &str[3 * mChoice_CHOICE_STRING_LEN], 0x29, (ACTOR*)p_sel2);
 }
 
+/* The name of the k-th resident that exists (list order = save block order). */
+static void aNPS2_copy_kth_name(u8* dst, int k) {
+    Private_c* priv = Save_GetPointer(private_data[0]);
+    int i;
+
+    for (i = 0; i < PLAYER_NUM; i++, priv++) {
+        if (mPr_NullCheckPersonalID(&priv->player_ID) == FALSE) {
+            if (k == 0) {
+                mem_copy(dst, priv->player_ID.player_name, PLAYER_NAME_LEN);
+                return;
+            }
+            k--;
+        }
+    }
+}
+
+/* The resident list (multiplayer fork: up to eight residents). Up to five
+ * names fit on one page with the extra entry; more are paged four at a
+ * time with "Other residents" (ROM string 0x1B9) as the way to the next
+ * page. type 1 ends the list with "I'm new" while a slot is free; type 0
+ * (the delete flow) with "Never mind" (ROM string 0x29). name_choice_map
+ * says what each row means. */
+#define aNPS2_NAMES_PER_PAGE (mChoice_CHOICE_NUM - 2)
 static void aNPS2_set_choice_str(NPC_P_SEL2_ACTOR* p_sel2, int type) {
     static u8 new_player_str[7] = "I'm new";
     mChoice_c* choice_win = mChoice_Get_base_window_p();
     u8* str_p[mChoice_CHOICE_NUM];
     u8* str = static_str;
     int player_sum = p_sel2->player_sum;
-    int i;
+    int pages = (player_sum <= mChoice_CHOICE_NUM - 1) ? 1 : (player_sum + aNPS2_NAMES_PER_PAGE - 1) / aNPS2_NAMES_PER_PAGE;
+    int first, count, n, i;
 
     mem_clear(str, sizeof(static_str), CHAR_SPACE);
     for (i = 0; i < mChoice_CHOICE_NUM; i++) {
         str_p[i] = NULL;
+        p_sel2->name_choice_map[i] = -3;
+    }
+    if (p_sel2->name_page < 0 || p_sel2->name_page >= pages) {
+        p_sel2->name_page = 0;
+    }
+    if (pages <= 1) {
+        first = 0;
+        count = player_sum;
+    } else {
+        first = p_sel2->name_page * aNPS2_NAMES_PER_PAGE;
+        count = player_sum - first;
+        if (count > aNPS2_NAMES_PER_PAGE) count = aNPS2_NAMES_PER_PAGE;
     }
 
-    switch (player_sum) {
-        case 1:
-        case 2:
-        case 3:
-            aNPS2_copy_player_name(str, str_p, player_sum);
-            if (type == 0) {
-                mChoice_Load_ChoseStringFromRom(choice_win, str + (player_sum * mChoice_CHOICE_STRING_LEN), 0x29,
-                                                (ACTOR*)p_sel2);
-            } else {
-                mem_copy(str + (player_sum * mChoice_CHOICE_STRING_LEN), new_player_str, sizeof(new_player_str));
-            }
-            str_p[player_sum] = str + (player_sum * mChoice_CHOICE_STRING_LEN);
-            break;
-        case 4:
-            aNPS2_copy_player_name(str, str_p, player_sum);
-            break;
+    n = 0;
+    for (i = 0; i < count; i++, n++) {
+        str_p[n] = str + (n * mChoice_CHOICE_STRING_LEN);
+        aNPS2_copy_kth_name(str_p[n], first + i);
+        p_sel2->name_choice_map[n] = (s8)(first + i);
+    }
+    if (pages > 1) {
+        str_p[n] = str + (n * mChoice_CHOICE_STRING_LEN);
+        mChoice_Load_ChoseStringFromRom(choice_win, str_p[n], 0x1B9, (ACTOR*)p_sel2);
+        p_sel2->name_choice_map[n] = -2;
+        n++;
+    }
+    if (type == 0) {
+        str_p[n] = str + (n * mChoice_CHOICE_STRING_LEN);
+        mChoice_Load_ChoseStringFromRom(choice_win, str_p[n], 0x29, (ACTOR*)p_sel2);
+        p_sel2->name_choice_map[n] = -1;
+        n++;
+    } else if (player_sum < PLAYER_NUM) {
+        str_p[n] = str + (n * mChoice_CHOICE_STRING_LEN);
+        mem_copy(str_p[n], new_player_str, sizeof(new_player_str));
+        p_sel2->name_choice_map[n] = -1;
+        n++;
     }
 
     // clang-format off
@@ -328,8 +370,8 @@ static void aNPS2_set_choice_str(NPC_P_SEL2_ACTOR* p_sel2, int type) {
         str_p[1], mChoice_CHOICE_STRING_LEN,
         str_p[2], mChoice_CHOICE_STRING_LEN,
         str_p[3], mChoice_CHOICE_STRING_LEN,
-        NULL, mChoice_CHOICE_STRING_LEN,
-        NULL, mChoice_CHOICE_STRING_LEN
+        str_p[4], mChoice_CHOICE_STRING_LEN,
+        str_p[5], mChoice_CHOICE_STRING_LEN
     );
     // clang-format on
 }
@@ -716,6 +758,7 @@ static void aNPS2_whats_happen(NPC_P_SEL2_ACTOR* p_sel2, GAME_PLAY* play) {
             }
 
             if (idx != -1) {
+                p_sel2->name_page = 0; /* the name list starts on its first page */
                 mMsg_SET_CONTINUE_MSG_NUM(aNPS2_make_msg(p_sel2, msg_no[idx]));
                 aNPS2_change_talk_proc(p_sel2, play, next_talk_idx[idx]);
                 mDemo_Set_OrderValue(mDemo_ORDER_NPC0, 9, 0);
@@ -770,12 +813,8 @@ static void aNPS2_chk_option2(NPC_P_SEL2_ACTOR* p_sel2, GAME_PLAY* play) {
                         msg_no = aNPS2_make_msg(p_sel2, 25);
                         next_talk_idx = aNPS2_TALK_WHATS_HAPPEN;
                         break;
-                    case 4:
-                        aNPS2_set_choice_str2(p_sel2, 0);
-                        msg_no = aNPS2_make_msg(p_sel2, 7);
-                        next_talk_idx = aNPS2_TALK_CHK_CLR_PL_DATA3;
-                        break;
-                    default:
+                    default: /* multiplayer fork: one paged list for any count */
+                        p_sel2->name_page = 0;
                         aNPS2_set_choice_str(p_sel2, 0);
                         msg_no = aNPS2_make_msg(p_sel2, 7);
                         next_talk_idx = aNPS2_TALK_CHK_CLR_PL_DATA;
@@ -869,14 +908,23 @@ static void aNPS2_chk_clr_pl_data(NPC_P_SEL2_ACTOR* p_sel2, GAME_PLAY* play) {
     int idx;
 
     if (order == 4 && mMsg_CHECK_MAINNORMALCONTINUE() == TRUE) {
+        int meaning;
+
         mDemo_Set_OrderValue(mDemo_ORDER_NPC0, 9, 0);
         player_sum = p_sel2->player_sum;
         chose_num = mChoice_GET_CHOSENUM();
+        meaning = (chose_num >= 0 && chose_num < mChoice_CHOICE_NUM) ? p_sel2->name_choice_map[chose_num] : -3;
 
-        if (player_sum == PLAYER_NUM) {
-            idx = aNPS2_player_no_set(p_sel2, chose_num);
-        } else if (chose_num < player_sum) {
-            idx = aNPS2_player_no_set(p_sel2, chose_num);
+        if (meaning == -2) {
+            // "Other residents": the next page, and the question again
+            p_sel2->name_page++;
+            aNPS2_set_choice_str(p_sel2, 0);
+            mMsg_SET_CONTINUE_MSG_NUM(aNPS2_make_msg(p_sel2, 7));
+            aNPS2_change_talk_proc(p_sel2, play, aNPS2_TALK_CHK_CLR_PL_DATA);
+            return;
+        }
+        if (meaning >= 0) {
+            idx = aNPS2_player_no_set(p_sel2, meaning);
         } else {
             idx = 2;
         }
@@ -1077,17 +1125,25 @@ static void aNPS2_select_player(NPC_P_SEL2_ACTOR* p_sel2, GAME_PLAY* play) {
     int chose_num;
 
     if (order == 6 && mMsg_CHECK_MAINNORMALCONTINUE() == TRUE) {
+        int meaning;
+
         mDemo_Set_OrderValue(mDemo_ORDER_NPC0, 9, 0);
         chose_num = mChoice_GET_CHOSENUM();
+        meaning = (chose_num >= 0 && chose_num < mChoice_CHOICE_NUM) ? p_sel2->name_choice_map[chose_num] : -3;
 
-        if (chose_num == p_sel2->player_sum) {
+        if (meaning == -2) {
+            // "Other residents": the next page of names, same question again
+            p_sel2->name_page++;
+            mMsg_SET_CONTINUE_MSG_NUM(aNPS2_make_msg(p_sel2, 17));
+            aNPS2_change_talk_proc(p_sel2, play, aNPS2_TALK_SELECT_PLAYER);
+        } else if (meaning == -1) {
             // create new player
             p_sel2->player_no = aNPS2_get_free_pl_no();
             mMsg_SET_CONTINUE_MSG_NUM(aNPS2_make_msg(p_sel2, 19));
             aNPS2_change_talk_proc(p_sel2, play, aNPS2_TALK_START_TYPE3);
-        } else {
+        } else if (meaning >= 0) {
             // load player
-            p_sel2->player_no = aNPS2_get_pl_no(chose_num);
+            p_sel2->player_no = aNPS2_get_pl_no(meaning);
             aNPS2_set_str_ct_player_name(p_sel2->player_no);
 
             if (Save_Get(private_data[p_sel2->player_no]).exists == TRUE) {

@@ -48,6 +48,8 @@ extern int mHS_house_acre_block(int acre, int* bx_out, int* bz_out);
 extern int mHS_house_origin(int house_no, f32* ox, f32* oz);
 /* Which house acre block (bx, bz) is: 0, 1, or -1 for neither. */
 extern int mHS_house_acre_of_block(int bx, int bz);
+/* TRUE when one of the acre's four houses has no owner yet. */
+extern int mHS_acre_has_free_house(int acre);
 
 #ifdef __cplusplus
 }

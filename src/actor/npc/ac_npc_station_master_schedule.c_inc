@@ -437,6 +437,9 @@ static aSTM_THINK_INIT_PROC init_table[] = {
 
 static void aSTM_setup_think_proc(NPC_STATION_MASTER_ACTOR* actor, GAME_PLAY* play, u8 think_idx) {
     aSTM_think_data_c* data_p = &dt_tbl[think_idx];
+#ifdef TARGET_PC
+    OSReport("[porter] think %d\n", (int)think_idx);
+#endif
     // clang-format off
     static aNPC_TALK_REQUEST_PROC talk_request_table[] = {
         (aNPC_TALK_REQUEST_PROC)none_proc1,
