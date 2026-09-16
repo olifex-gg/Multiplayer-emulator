@@ -1430,6 +1430,20 @@ static int mFM_BlockTypeOfSave(int bx, int bz) {
     return data_combi_table[combi].type;
 }
 
+/* TRUE when a villager's house stands in block (bx, bz): the house is a
+ * cell in the 0x5000-0x50FF range (mNpc_BuildHouseBeforeFieldct). */
+static int mFM_BlockHasVillagerHouse(int bx, int bz) {
+    const mFM_fg_c* fg = Save_GetPointer(fg[bz - 1][bx - 1]);
+    int utz, utx;
+    for (utz = 0; utz < UT_Z_NUM; utz++) {
+        for (utx = 0; utx < UT_X_NUM; utx++) {
+            mActor_name_t v = fg->items[utz][utx];
+            if (v >= 0x5000 && v <= 0x50FF) return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 extern int mFM_MakeSecondHouseAcre(void) {
     static const int order[][2] = { /* bx, bz: after the first acre in row order, and not next to
                                      * it (a loaded neighbour would be rebuilt under its actors) */
@@ -1453,10 +1467,22 @@ extern int mFM_MakeSecondHouseAcre(void) {
             if (mFM_BlockTypeOfSave(bx, bz) == mFM_BLOCK_TYPE_PLAYER_HOUSE) return TRUE;
         }
     }
+    /* First choice: a flat acre nobody lives in. A villager's house would
+     * be wiped out with the acre and leave them homeless, so such an acre
+     * is taken only if every flat acre has one. */
+    for (i = 0; i < (int)(sizeof(order) / sizeof(order[0])) && chosen_bx < 0; i++) {
+        if (mFM_BlockTypeOfSave(order[i][0], order[i][1]) == mFM_BLOCK_TYPE_FLAT &&
+            !mFM_BlockHasVillagerHouse(order[i][0], order[i][1])) {
+            chosen_bx = order[i][0];
+            chosen_bz = order[i][1];
+        }
+    }
     for (i = 0; i < (int)(sizeof(order) / sizeof(order[0])) && chosen_bx < 0; i++) {
         if (mFM_BlockTypeOfSave(order[i][0], order[i][1]) == mFM_BLOCK_TYPE_FLAT) {
             chosen_bx = order[i][0];
             chosen_bz = order[i][1];
+            OSReport("[town] every flat acre has a villager's house; the one at %d,%d loses theirs\n", chosen_bx,
+                     chosen_bz);
         }
     }
     if (chosen_bx < 0) {

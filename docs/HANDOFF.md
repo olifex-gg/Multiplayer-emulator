@@ -350,6 +350,13 @@ Stage 1, done and tested: the save, the server, the tools.
   hers and Owen's running game took her character and house live. The intro's steps are
   logged as `[intro] step N (player P, first intro F)`; Porter's states as
   `[porter] think N`.
+- *Villagers and the second acre.* A villager's house can only be built on a "reserve"
+  cell (`mNT_IS_RESERVE`, the SIGN ids) baked into a flat acre's template; the house-acre
+  templates have none, so no villager house can ever appear in either house acre. The
+  acre that becomes the second house acre is chosen among flat acres with **no villager
+  house** (cells 0x5000-0x50FF) first, so nobody loses a home; in the user's town C-1 had
+  none. The walkway in a house acre is part of its ground model (all three variants lead
+  north, to a station), so it cannot be joined to anything without a new model.
 - *Fixed: a black screen while Nook talked after the look inside.* `aID_birth_rcn_guide`
   re-spawns Nook next to the house after the player comes out, and its block was the
   literal first house acre (3, 2): in the second acre Nook stood two acres away, and the
