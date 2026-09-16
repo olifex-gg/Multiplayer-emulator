@@ -215,9 +215,19 @@ item-name thought bubble over the head) the user asked for the villagers' speech
 bubble itself, so that long messages fit, sized to the message. `src/game/m_chat_bubble.c`
 (PC build only; the file name is historical) drives the game's own message window
 (`mMsg`): it builds the text in the game's character set, word-wraps it onto up to four
-lines (`CHAR_NEW_LINE` between them; the limit is 440 of `mFont_GetStringWidth`'s units, about 2.6 times the drawn pixels, which ends where a villager's longest lines do; the rest of a longer message follows in a second window), appends the timed-end control code
-(`mFont_CONT_CODE_MSG_TIME_END`, unit 4 frames: 30 + one per character) and the end
-code, and calls `mMsg_request_main_appear(window, NULL, TRUE, colour, mMsg_CHAT_MSG_NO, 5)`.
+lines (`CHAR_NEW_LINE` between them; the limit is 400 of `mFont_GetStringWidth`'s units, about 2.6 times the drawn pixels, a little short of a villager's longest lines; the rest of a longer message follows in a second window), appends the end code (no timed-end code: the
+game counts that from when the text cursor reaches it, which is before the last letter
+is on screen, so the switch to the next window came too soon); instead `mCB_move` waits
+for the window's NORMAL state -- reached only when every letter is shown, since there
+are no page breaks and the continue button is locked -- then holds 120 frames (2 s)
+when more of the message follows in the next window, or 150 + one per character for the
+last window, and calls `mMsg_request_main_disappear`. The window itself is requested with
+`mMsg_request_main_appear(window, NULL, TRUE, colour, mMsg_CHAT_MSG_NO, 5)`. The module
+logs `[chat] window up / full after N ms / closing after N ms hold` so the timing can be
+read off `aclog.txt` on anyone's machine; measured on the rig with two real games, a
+174-character message gave a four-line window full 4.7 s after it opened (the game types
+at 30 characters a second), a 1984 ms hold, then a two-line window with a 3334 ms hold,
+identical on the sender's and the other resident's screen.
 Three hooks in `m_msg` under `TARGET_PC`: `mMsg_LoadMsgData` copies `mMsg_chat_text`
 for that message number instead of reading the ROM; `mMsg_Set_client_actor_p` and
 `mMsg_DrawWindowClientName` put `mMsg_chat_name` (the resident's saved character name,
@@ -233,9 +243,12 @@ player: only `mDemo` does that, and chat never goes through it. Everything with 
 speaker actor was checked NULL-safe (name lookups, voice spec, sound spec: the voice
 becomes the generic animalese spec 2, so the words are "spoken"). The clock (`m_banti.c`) fades while any message window is up, as it does for a conversation. Queue of 8; a message waits while a villager conversation or any demo is running.
 Lines are up to `ACNET_CHAT_LEN` = 200 characters (protocol version 6; the old 96 cut
-the last letter off a 97-character test message): a 178-character message filled one
+the last letter off a 97-character test message): a 174-character message filled one
 four-line window and finished in a second one-line window. The typing bar in `pc_chat.c`
-scrolls to show the tail of a long line and drops its key hint past 40 characters.
+scrolls to show the tail of a long line and drops its key hint past 40 characters. The T
+that opens the line also arrives as typed text, which the line discards -- but only within
+250 ms of opening: the rig posts the opening key without its text, so the discard used to
+eat the first letter of the message instead ("his is a much longer...").
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

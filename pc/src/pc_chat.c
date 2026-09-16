@@ -28,6 +28,7 @@ int g_pc_chat_typing;
 static char        s_input[ACNET_CHAT_LEN + 1];
 static int         s_input_len;
 static int         s_swallow_open_key; /* the T that opened the line also arrives as text */
+static Uint32      s_open_ms;           /* when it opened: that text comes with the key press */
 static SDL_Keycode s_closing_key;      /* the key that closed the line, until it comes back up */
 static Uint32      s_closed_ms;
 
@@ -54,6 +55,7 @@ static void chat_open(void) {
     s_input_len = 0;
     s_input[0] = '\0';
     s_swallow_open_key = 1;
+    s_open_ms = SDL_GetTicks();
     SDL_StartTextInput();
 }
 
@@ -134,8 +136,11 @@ int pc_chat_handle_event(const SDL_Event* e) {
     if (e->type == SDL_TEXTINPUT && g_pc_chat_typing) {
         const char* t = e->text.text;
         if (s_swallow_open_key) {
+            /* Only the text that came with the opening key press itself
+             * (a real keyboard delivers it in the same instant); a T typed
+             * later is the first letter of the message. */
             s_swallow_open_key = 0;
-            if ((t[0] == 't' || t[0] == 'T') && t[1] == '\0') {
+            if ((t[0] == 't' || t[0] == 'T') && t[1] == '\0' && SDL_GetTicks() - s_open_ms < 250) {
                 return 1;
             }
         }

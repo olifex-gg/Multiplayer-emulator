@@ -22,6 +22,8 @@
 #include "m_common_data.h"
 #include "m_private.h"
 #include "pc_net.h"
+#include "pc_log.h"
+#include "dolphin/os.h"
 #include <string.h>
 
 #define mCB_QUEUE     8
@@ -29,8 +31,9 @@
 /* Line width limit in mFont_GetStringWidth units. Those are about 2.6 times
  * the pixels the window's text is drawn at (measured on screen: 17 narrow
  * characters were 210 units and 80 px). 500 ran a hair past the window's
- * right edge; 440 ends where a villager's longest lines do. */
-#define mCB_LINE_PX   440.0f
+ * right edge, 440 ended where a villager's longest lines do; 400 leaves a
+ * little air before the edge, as asked. */
+#define mCB_LINE_PX   400.0f
 #define mCB_MAX_LINES mMsg_MAX_LINE
 
 typedef struct {
@@ -42,6 +45,14 @@ static mCB_msg_c S_queue[mCB_QUEUE];
 static int       S_queue_len;
 static int       S_showing;      /* our message is in the window */
 static int       S_showing_slot;
+static f32       S_hold_timer;   /* frames since the text was fully shown */
+static f32       S_hold_frames;  /* how long to keep it there after that */
+static OSTime    S_shown_tick;   /* when the window was requested, for the log */
+static OSTime    S_full_tick;    /* when its last letter was on screen */
+
+static u32 mCB_ms_since(OSTime then) {
+    return (u32)((OSGetTime() - then) / (OSTime)(OS_TIMER_CLOCK / 1000));
+}
 
 /* ASCII to the game's character set: letters, digits and the punctuation
  * the font has keep their codes (the table the PC text editor uses); the
@@ -120,9 +131,12 @@ static void mCB_reset(mMsg_Window_c* msg_p) {
 }
 
 /* Wrap the message onto up to four lines of the window's width and build
- * the message bytes: text, new lines, then the timed-end and end codes.
- * *used_out is how many of the ASCII characters fitted; the rest goes in
- * the next window. */
+ * the message bytes: text, new lines, then the end code. *used_out is how
+ * many of the ASCII characters fitted; the rest goes in the next window.
+ * *hold_out is how many frames the window should stay once the last letter
+ * has appeared (mCB_move counts them): two seconds when more of the
+ * message follows, two and a half plus a frame per character when it is
+ * the last window. */
 static int mCB_build(const char* ascii, int* lines_out, int* hold_out, int* used_out) {
     u8 text[mCB_TEXT_MAX + 1];
     int text_len = 0, i, pos = 0, lines = 0, out = 0;
@@ -149,16 +163,7 @@ static int mCB_build(const char* ascii, int* lines_out, int* hold_out, int* used
         lines++;
     }
     *used_out = pos;
-    /* Closes by itself: the timed-end code's unit is four frames; two
-     * seconds plus a character's worth each, up to about seventeen. */
-    {
-        int hold = 30 + pos;
-        if (hold > 255) hold = 255;
-        mMsg_chat_text[out++] = CHAR_CONTROL_CODE;
-        mMsg_chat_text[out++] = mFont_CONT_CODE_MSG_TIME_END;
-        mMsg_chat_text[out++] = (u8)hold;
-        *hold_out = hold;
-    }
+    *hold_out = (pos < text_len) ? 120 : 150 + pos;
     mMsg_chat_text[out++] = CHAR_CONTROL_CODE;
     mMsg_chat_text[out++] = mFont_CONT_CODE_LAST;
     *lines_out = lines > 0 ? lines : 1;
@@ -172,13 +177,26 @@ extern void mCB_move(GAME_PLAY* play) {
     rgba_t color;
     int lines, hold, used;
     f32 height;
-    (void)play;
-
     if (S_showing) {
         /* Ours until it has gone, or until a villager took the window. */
         if (mMsg_Check_main_hide(msg_p) || msg_p->msg_data == NULL || msg_p->msg_data->msg_no != mMsg_CHAT_MSG_NO) {
             mCB_reset(msg_p);
         } else {
+            /* The window sits in its "normal" state once every letter is on
+             * screen (nothing else brings it there: no page breaks, and the
+             * continue button is locked). Give the reader the hold, then
+             * close it; the next window, if any, follows. */
+            if (mMsg_Check_main_index(msg_p, mMsg_INDEX_NORMAL)) {
+                if (S_full_tick == 0) {
+                    S_full_tick = OSGetTime();
+                    pc_log_printf("[chat] window full after %u ms; holding %d frames\n", mCB_ms_since(S_shown_tick), (int)S_hold_frames);
+                }
+                S_hold_timer += (f32)play->game.graph->dt_num_60fps_frames;
+                if (S_hold_timer >= S_hold_frames) {
+                    pc_log_printf("[chat] window closing after a %u ms hold\n", mCB_ms_since(S_full_tick));
+                    mMsg_request_main_disappear(msg_p);
+                }
+            }
             return;
         }
     }
@@ -234,6 +252,11 @@ extern void mCB_move(GAME_PLAY* play) {
         mMsg_Set_LockContinue(msg_p); /* no continue button; A and B leave it alone */
         S_showing = 1;
         S_showing_slot = m.slot;
+        S_hold_timer = 0.0f;
+        S_hold_frames = (f32)hold;
+        S_shown_tick = OSGetTime();
+        S_full_tick = 0;
+        pc_log_printf("[chat] window up: %d line(s), %d of %d characters\n", lines, used, (int)strlen(m.text));
     } else {
         mCB_reset(msg_p);
     }
