@@ -769,11 +769,11 @@ static void aSIGN_random_set(void) {
             for (ut_z = 0; ut_z < UT_Z_NUM; ut_z++) {
                 for (ut_x = 0; ut_x < UT_X_NUM; ut_x++, fg_p++) {
                     if (*fg_p == TREE && GETREG(NMREG, 0) == 1000) {
-                        mFI_UtNumtoFGSet_common(SIGNBOARD_START + (qrand() >> 27), bx * UT_X_NUM + ut_x,
+                        mFI_UtNumtoFGSet_common(SIGNBOARD_START + (qrand() >> 26), bx * UT_X_NUM + ut_x,
                                                 bz * UT_Z_NUM + ut_z, TRUE);
                     } else if (*fg_p == EMPTY_NO && GETREG(NMREG, 0) == 100) {
                         if ((ut_z & 1) != 0 && (ut_x & 1) != 0) {
-                            mFI_UtNumtoFGSet_common(SIGNBOARD_START + (u16)(qrand() >> 27), bx * UT_X_NUM + ut_x,
+                            mFI_UtNumtoFGSet_common(SIGNBOARD_START + (u16)(qrand() >> 26), bx * UT_X_NUM + ut_x,
                                                     bz * UT_Z_NUM + ut_z, TRUE);
                         }
                     }
@@ -838,7 +838,7 @@ static void aSIGN_single_all_draw(SIGN_ACTOR* sign, GAME* game) {
             mFI_BkandUtNum2CenterWpos(&sign_pos, sign->single[i].block.x, sign->single[i].block.z,
                                       sign->single[i].unit.x, sign->single[i].unit.z);
             sign_pos.y = mCoBG_GetBgY_OnlyCenter_FromWpos2(sign_pos, 0.0f);
-            player_no = (sign->single[i].item >> 3) & 3;
+            player_no = (sign->single[i].item >> SIGNBOARD_PLAYER_SHIFT) & SIGNBOARD_PLAYER_MASK;
             my_original_idx = sign->single[i].item & 7;
 
             Matrix_translate(sign_pos.x, sign_pos.y, sign_pos.z - 1.0f, MTX_LOAD);
@@ -846,7 +846,7 @@ static void aSIGN_single_all_draw(SIGN_ACTOR* sign, GAME* game) {
 
             OPEN_POLY_OPA_DISP(graph);
 
-            if ((sign->single[i].item >> 5) & 1) {
+            if ((sign->single[i].item >> SIGNBOARD_BLANK_BIT) & 1) {
                 pal_p = hakushi_pal;
                 tex_p = hakushi_tex;
             } else {
@@ -920,7 +920,7 @@ static void aSIGN_actor_draw(ACTOR* actorx, GAME* game) {
                                 mFI_BkandUtNum2CenterWpos(&sign_pos, draw_p->block.x, draw_p->block.z, ut_x, ut_z);
                                 sign_pos.y = mCoBG_GetBgY_OnlyCenter_FromWpos2(sign_pos, 0.0f);
 
-                                player_no = (item >> 3) & 3;
+                                player_no = (item >> SIGNBOARD_PLAYER_SHIFT) & SIGNBOARD_PLAYER_MASK;
                                 my_original_idx = item & 7;
 
                                 OPEN_POLY_OPA_DISP(graph);
@@ -930,7 +930,7 @@ static void aSIGN_actor_draw(ACTOR* actorx, GAME* game) {
                                 mtxf->mf[3][1] = sign_pos.y;
                                 mtxf->mf[3][2] = sign_pos.z;
 
-                                if ((item >> 5) & 1) {
+                                if ((item >> SIGNBOARD_BLANK_BIT) & 1) {
                                     pal_p = hakushi_pal;
                                     tex_p = hakushi_tex;
                                 } else {

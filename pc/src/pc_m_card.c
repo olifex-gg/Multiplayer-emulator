@@ -25,6 +25,7 @@
 #include "sys_math.h"
 #include "zurumode.h"
 #include "pc_save_bswap.h"
+#include "pc_save_convert.h"
 #include "pc_settings.h"
 #include "m_cockroach.h"
 #include "m_all_grow_ovl.h"
@@ -444,62 +445,123 @@ static int pc_save_write_gci_to(const char* gci_path, const char* tmp_path) {
     return TRUE;
 }
 
-/* Read a GCI file into common_data (for home town / Card A) */
-static int pc_save_read_gci(const char* path) {
+/* Read a town file's payload into a malloc'd GCI_FILE_DATA_SIZE buffer. A
+ * file from the four-resident builds (multiplayer fork) is converted to the
+ * eight-resident layout on the way, and *converted says so; the header's
+ * block count is updated to match. */
+static u8* pc_gci_read_payload(const char* path, CARDDir* dir_hdr, int* converted, int verbose) {
     FILE* fp;
-    CARDDir dir_hdr;
-    u8* file_data;
-    Save_t* save_src;
-    u32 offset;
+    u8* file_data = NULL;
     long file_size;
 
+    *converted = FALSE;
     fp = fopen(path, "rb");
     if (!fp) {
-        OSReport("[PC] GCI: fopen('%s') failed\n", path);
-        return FALSE;
+        if (verbose) OSReport("[PC] GCI: fopen('%s') failed\n", path);
+        return NULL;
     }
 
     fseek(fp, 0, SEEK_END);
     file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    OSReport("[PC] GCI: opened '%s', size = %ld (0x%lX), expected %ld (0x%lX)\n",
-             path, file_size, (unsigned long)file_size,
-             (long)(GCI_HEADER_SIZE + GCI_FILE_DATA_SIZE),
-             (unsigned long)(GCI_HEADER_SIZE + GCI_FILE_DATA_SIZE));
-
-    if (fread(&dir_hdr, GCI_HEADER_SIZE, 1, fp) != 1) {
-        OSReport("[PC] GCI: failed to read %u-byte header\n", (unsigned)GCI_HEADER_SIZE);
-        fclose(fp);
-        return FALSE;
+    if (verbose) {
+        OSReport("[PC] GCI: opened '%s', size = %ld (0x%lX), expected %ld (0x%lX)\n",
+                 path, file_size, (unsigned long)file_size,
+                 (long)(GCI_HEADER_SIZE + GCI_FILE_DATA_SIZE),
+                 (unsigned long)(GCI_HEADER_SIZE + GCI_FILE_DATA_SIZE));
     }
 
-    OSReport("[PC] GCI: gameName='%c%c%c%c' company='%c%c' fileName='%.32s'\n",
-             dir_hdr.gameName[0], dir_hdr.gameName[1],
-             dir_hdr.gameName[2], dir_hdr.gameName[3],
-             dir_hdr.company[0], dir_hdr.company[1],
-             dir_hdr.fileName);
-    if (memcmp(dir_hdr.gameName, "GAF", 3) != 0) {
-        OSReport("[PC] GCI: not an Animal Crossing save (expected GAFx, got '%.4s')\n",
-                 dir_hdr.gameName);
+    if (fread(dir_hdr, GCI_HEADER_SIZE, 1, fp) != 1) {
+        if (verbose) OSReport("[PC] GCI: failed to read %u-byte header\n", (unsigned)GCI_HEADER_SIZE);
         fclose(fp);
-        return FALSE;
+        return NULL;
+    }
+    if (verbose) {
+        OSReport("[PC] GCI: gameName='%c%c%c%c' company='%c%c' fileName='%.32s'\n",
+                 dir_hdr->gameName[0], dir_hdr->gameName[1],
+                 dir_hdr->gameName[2], dir_hdr->gameName[3],
+                 dir_hdr->company[0], dir_hdr->company[1],
+                 dir_hdr->fileName);
+    }
+    if (memcmp(dir_hdr->gameName, "GAF", 3) != 0) {
+        if (verbose) OSReport("[PC] GCI: not an Animal Crossing save (expected GAFx, got '%.4s')\n", dir_hdr->gameName);
+        fclose(fp);
+        return NULL;
     }
 
     file_data = (u8*)malloc(GCI_FILE_DATA_SIZE);
     if (!file_data) {
         OSReport("[PC] GCI: malloc(%u) failed\n", (unsigned)GCI_FILE_DATA_SIZE);
         fclose(fp);
-        return FALSE;
+        return NULL;
     }
 
-    if (fread(file_data, GCI_FILE_DATA_SIZE, 1, fp) != 1) {
-        OSReport("[PC] GCI: failed to read %u bytes of file data (file may be too small)\n",
-                 (unsigned)GCI_FILE_DATA_SIZE);
+    if (file_size == PC_SAVE_LEGACY_GCI_FILE_SIZE) {
+        u8* old = (u8*)malloc(PC_SAVE_LEGACY_GCI_PAYLOAD_SIZE);
+        int ok = old != NULL && fread(old, PC_SAVE_LEGACY_GCI_PAYLOAD_SIZE, 1, fp) == 1 &&
+                 pc_save_convert_legacy_payload(old, file_data, (u8*)dir_hdr);
+        free(old);
+        if (!ok) {
+            OSReport("[PC] GCI: '%s' is a four-resident town file and could not be converted\n", path);
+            fclose(fp);
+            free(file_data);
+            return NULL;
+        }
+        *converted = TRUE;
+    } else if (fread(file_data, GCI_FILE_DATA_SIZE, 1, fp) != 1) {
+        if (verbose) {
+            OSReport("[PC] GCI: failed to read %u bytes of file data (file may be too small)\n",
+                     (unsigned)GCI_FILE_DATA_SIZE);
+        }
         fclose(fp);
         free(file_data);
-        return FALSE;
+        return NULL;
     }
     fclose(fp);
+    return file_data;
+}
+
+/* Keep the four-resident file once, beside the one the game will rewrite. */
+static void pc_save_keep_legacy_copy(const char* path) {
+    char keep[512];
+    FILE* in;
+    FILE* out;
+    u8 buf[4096];
+    size_t n;
+
+    snprintf(keep, sizeof(keep), "%s.before-eight", path);
+    in = fopen(keep, "rb");
+    if (in) {
+        fclose(in);
+        return;
+    }
+    in = fopen(path, "rb");
+    if (!in) return;
+    out = fopen(keep, "wb");
+    if (!out) {
+        fclose(in);
+        return;
+    }
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
+    }
+    fclose(out);
+    fclose(in);
+    OSReport("[PC] GCI: kept the four-resident town file as '%s'\n", keep);
+}
+
+/* Read a GCI file into common_data (for home town / Card A) */
+static int pc_save_read_gci(const char* path) {
+    CARDDir dir_hdr;
+    u8* file_data;
+    Save_t* save_src;
+    u32 offset;
+    int converted;
+
+    file_data = pc_gci_read_payload(path, &dir_hdr, &converted, TRUE);
+    if (!file_data) {
+        return FALSE;
+    }
 
     save_src = (Save_t*)(file_data + GCI_SAVE_MAIN_OFFSET);
     pc_save_bswap_verify_roundtrip((const u8*)save_src, sizeof(Save_t));
@@ -557,6 +619,10 @@ static int pc_save_read_gci(const char* path) {
     }
 
     free(file_data);
+    if (converted) {
+        pc_save_keep_legacy_copy(path);
+        pc_save_convert_fixup_loaded();
+    }
     return TRUE;
 }
 
@@ -564,25 +630,14 @@ static int pc_save_read_gci(const char* path) {
  * Also loads ARAM blocks (mail/original/diary) into the l_keep* buffers.
  * Returns TRUE on success. */
 static int pc_save_read_gci_to_keep(const char* path) {
-    FILE* fp;
     CARDDir dir_hdr;
     u8* file_data;
     Save_t* save_src;
     u32 offset;
+    int converted;
 
-    fp = fopen(path, "rb");
-    if (!fp) return FALSE;
-
-    if (fread(&dir_hdr, GCI_HEADER_SIZE, 1, fp) != 1) { fclose(fp); return FALSE; }
-    if (memcmp(dir_hdr.gameName, "GAF", 3) != 0) { fclose(fp); return FALSE; }
-
-    file_data = (u8*)malloc(GCI_FILE_DATA_SIZE);
-    if (!file_data) { fclose(fp); return FALSE; }
-
-    if (fread(file_data, GCI_FILE_DATA_SIZE, 1, fp) != 1) {
-        fclose(fp); free(file_data); return FALSE;
-    }
-    fclose(fp);
+    file_data = pc_gci_read_payload(path, &dir_hdr, &converted, FALSE);
+    if (!file_data) return FALSE;
 
     /* Load Save_t into l_keepSave (try main, fall back to backup) */
     save_src = (Save_t*)(file_data + GCI_SAVE_MAIN_OFFSET);
@@ -945,29 +1000,16 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
 
 /* Read a GCI's Save_t into `out` (byte-swapped). Returns TRUE on success. */
 static int pc_read_gci_land_info(const char* path, Save_t* out) {
-    FILE* fp;
     CARDDir hdr;
     u8* file_data;
-    int ok = FALSE;
+    int converted;
 
-    fp = fopen(path, "rb");
-    if (!fp) return FALSE;
-
-    if (fread(&hdr, GCI_HEADER_SIZE, 1, fp) == 1 &&
-        memcmp(hdr.gameName, "GAF", 3) == 0) {
-        file_data = (u8*)malloc(GCI_FILE_DATA_SIZE);
-        if (file_data) {
-            if (fread(file_data, GCI_FILE_DATA_SIZE, 1, fp) == 1) {
-                Save_t* save_src = (Save_t*)(file_data + GCI_SAVE_MAIN_OFFSET);
-                memcpy(out, save_src, sizeof(Save_t));
-                pc_save_bswap(out, PC_BSWAP_FROM_BE);
-                ok = TRUE;
-            }
-            free(file_data);
-        }
-    }
-    fclose(fp);
-    return ok;
+    file_data = pc_gci_read_payload(path, &hdr, &converted, FALSE);
+    if (!file_data) return FALSE;
+    memcpy(out, file_data + GCI_SAVE_MAIN_OFFSET, sizeof(Save_t));
+    pc_save_bswap(out, PC_BSWAP_FROM_BE);
+    free(file_data);
+    return TRUE;
 }
 
 /* Scan the "other" card for a travel-eligible town.

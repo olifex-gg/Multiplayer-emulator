@@ -424,7 +424,7 @@ static int sChk_PostOffice_c_sub(PostOffice_c* post_office, int depth) {
         res = TRUE;
     }
 
-    if (post_office->mail_recipient_flags & (u16)(~0b1111)) {
+    if (post_office->mail_recipient_flags & (u16)(~((1 << PLAYER_NUM) - 1))) {
         mFRm_ERRORLINE(1647);
         res = TRUE;
     }
@@ -436,12 +436,12 @@ static int sChk_PostOffice_c_sub(PostOffice_c* post_office, int depth) {
     res |= sChk_Mail_c_sub(&post_office->leaflet, depth + 1);
     res |= sChk_Mail_c_sub(&post_office->event_leaflet, depth + 1);
 
-    if (post_office->leaflet_recipient_flags.leaflet_flags & (u16)(~0b1111)) {
+    if (post_office->leaflet_recipient_flags.leaflet_flags & (u16)(~((1 << PLAYER_NUM) - 1))) {
         mFRm_ERRORLINE(1668);
         res = TRUE;
     }
 
-    if (post_office->leaflet_recipient_flags.event_flags & (u16)(~0b1111)) {
+    if (post_office->leaflet_recipient_flags.event_flags & (u16)(~((1 << PLAYER_NUM) - 1))) {
         mFRm_ERRORLINE(1682);
         res = TRUE;
     }

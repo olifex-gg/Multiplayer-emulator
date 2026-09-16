@@ -23,7 +23,7 @@ static void aMyfmanekin_dt(FTR_ACTOR* ftr_actor, u8* data) {
 }
 
 static void aMyfmanekin_dma(mActor_name_t ftr_name, u8* data) {
-    int house_no = (mFI_GetFieldId() - mFI_FIELD_PLAYER0_ROOM) & 3;
+    int house_no = mFI_GET_PLAYER_ROOM_NO(mFI_GetFieldId());
     int player_no = mHS_get_pl_no(house_no);
     u32 manekin_no = ((ftr_name - FTR_CLOTH_MANNIQUIN_MY_ORIGINAL0) >> 2);
 

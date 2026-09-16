@@ -4,7 +4,7 @@ without a second person.
 
 Copies the character (Private_c) in save block SRC of a town blob into block
 DST, and the HOUSE that player SRC lives in over the house player DST lives in
-(houses are assigned through Save_t.house_arrangement, two bits per player, and
+(houses are assigned through Save_t.house_arrangement, one byte per player, and
 are NOT indexed by save block: in the user's town player 0 lives in house 1),
 then renames it and changes its gender, face type and shirt, and writes the
 result as a new town blob. An earlier version copied homes[SRC] over homes[DST]
@@ -30,7 +30,7 @@ import sys
 from mktown import C, fix, home_range, private_range
 
 GENDER_OFF = 0x14
-ARRANGEMENT_OFF = 0x02068A  # Save_t.house_arrangement, relative to Save_t
+ARRANGEMENT_OFF = C["ACNET_HOUSE_ARRANGEMENT_OFFSET"]  # Save_t.house_arrangement[8], relative to Save_t
 FACE_OFF = 0x15
 CLOTH_OFF = 0x1088
 ID_OFF = C["ACNET_PRIVATE_ID_OFFSET"]
@@ -54,9 +54,8 @@ def main(argv):
     p, q = private_range(dst)
     blob[p:q] = blob[a:b]
     # Houses go by Save_t.house_arrangement, not by save block.
-    arr = blob[C["MAIN_ABS"] + ARRANGEMENT_OFF]
-    src_house = (arr >> (src * 2)) & 3
-    dst_house = (arr >> (dst * 2)) & 3
+    src_house = blob[C["MAIN_ABS"] + ARRANGEMENT_OFF + src] & 7
+    dst_house = blob[C["MAIN_ABS"] + ARRANGEMENT_OFF + dst] & 7
     if src_house != dst_house:
         a, b = home_range(src_house)
         p2, q2 = home_range(dst_house)

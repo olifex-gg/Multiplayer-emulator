@@ -1774,7 +1774,7 @@ extern int mNpc_SendVtdayMail() {
 
     animal_p = Save_Get(animals);
     sent = 0;
-    player_bitfield = 0b1111;
+    player_bitfield = (u8)((1 << PLAYER_NUM) - 1);
 
     for (i = 0; i < ANIMAL_NUM_MAX; i++) {
         other_sex_best_friends[i] = -1;

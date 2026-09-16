@@ -60,29 +60,26 @@ struct npc_totakeke_think_data_s {
     /* 0x04 */ u8 pre_roll_think;
 };
 
+/* Per-player flags are shifted by the player number: HELLO takes bits 0-7,
+ * AIRCHECK bits 8-15 (multiplayer fork: eight residents, so the word is
+ * 32 bits wide and the special flags moved up). */
 #define aNTT_FLAG_HELLO (1 << 0)
-#define aNTT_FLAG_1 (1 << 1)
-#define aNTT_FLAG_2 (1 << 2)
-#define aNTT_FLAG_3 (1 << 3)
-#define aNTT_FLAG_AIRCHECK_RECEIVED (1 << 4)
-#define aNTT_FLAG_5 (1 << 5)
-#define aNTT_FLAG_6 (1 << 6)
-#define aNTT_FLAG_7 (1 << 7)
-#define aNTT_FLAG_SP_DELETE_MAJIN (1 << 13)
-#define aNTT_FLAG_SP_ROLL_DRAW (1 << 14)
-#define aNTT_FLAG_SP_ROLL_END (1 << 15)
+#define aNTT_FLAG_AIRCHECK_RECEIVED (1 << 8)
+#define aNTT_FLAG_SP_DELETE_MAJIN (1 << 24)
+#define aNTT_FLAG_SP_ROLL_DRAW (1 << 25)
+#define aNTT_FLAG_SP_ROLL_END (1 << 26)
 
 struct npc_totakeke_event_save_s {
     /* 0x00 */ s16 _00;
-    /* 0x01 */ u16 bitfield;
-    /* 0x04 */ u8 request_str[mIN_ITEM_NAME_LEN];
-    /* 0x14 */ u8 roll_flag;
-    /* 0x15 */ u8 copyright_alpha;
+    /* 0x02 */ u16 _02;
+    /* 0x04 */ u32 bitfield;
+    /* 0x08 */ u8 request_str[mIN_ITEM_NAME_LEN];
+    /* 0x18 */ u8 roll_flag;
+    /* 0x19 */ u8 copyright_alpha;
 };
 
 struct npc_totakeke_event_common_s {
-    /* 0x00 */ u16 foreigner_bitfield;
-    /* 0x02 */ u16 _02;
+    /* 0x00 */ u32 foreigner_bitfield;
     /* 0x04 */ u8 request_str;
     /* 0x05 */ u16 _05;
     /* 0x07 */ u8 _07;

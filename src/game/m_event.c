@@ -77,7 +77,7 @@ extern void mEv_ClearEventSaveInfo(mEv_event_save_c* save_event) {
 
 extern void mEv_ClearEventInfo() {
     mEv_event_save_c* event_save = Save_GetPointer(event_save_data);
-    u32* event_flag = Common_Get(event_flags);
+    u64* event_flag = Common_Get(event_flags);
     int i;
 
     for (i = 0; i < mEv_EVENT_TYPE_NUM; i++) {
@@ -94,8 +94,8 @@ extern void mEv_EventON(u32 event_kind) {
     u32 type = mEv_GET_TYPE(event_kind);
 
     if (type < mEv_EVENT_TYPE_NUM) {
-        u32* flag_p = Common_GetPointer(event_flags[type]);
-        *flag_p |= (1 << mEv_GET_SUBTYPE(event_kind));
+        u64* flag_p = Common_GetPointer(event_flags[type]);
+        *flag_p |= ((u64)1 << mEv_GET_SUBTYPE(event_kind));
 
         if (type == mEv_SAVED_EVENT) {
             Save_Get(event_save_data).flags = *flag_p;
@@ -107,8 +107,8 @@ extern void mEv_EventOFF(u32 event_kind) {
     u32 type = mEv_GET_TYPE(event_kind);
 
     if (type < mEv_EVENT_TYPE_NUM) {
-        u32* flag_p = Common_GetPointer(event_flags[type]);
-        u32 mask = 1 << mEv_GET_SUBTYPE(event_kind);
+        u64* flag_p = Common_GetPointer(event_flags[type]);
+        u64 mask = (u64)1 << mEv_GET_SUBTYPE(event_kind);
 
         *flag_p &= ~mask;
         if (type == mEv_SAVED_EVENT) {
@@ -122,7 +122,7 @@ extern int mEv_CheckEvent(u32 event_kind) {
     int res = FALSE;
 
     if (type < mEv_EVENT_TYPE_NUM) {
-        u32* flags_p = Common_GetPointer(event_flags[type]);
+        u64* flags_p = Common_GetPointer(event_flags[type]);
 
         if (((*flags_p) >> mEv_GET_SUBTYPE(event_kind)) & 1) {
             res = TRUE;
@@ -1059,7 +1059,7 @@ static int init_special_event(int new_event) {
         dates_p[mEv_SAVE_DATE_SPECIAL2] = special_end_monthday.raw; // end date
         Save_Set(event_year, rtc_time->year);
         Save_Get(post_office).leaflet_recipient_flags.event_flags =
-            0b1111; // deliver leaflet to all players if necessary for event
+            (1 << PLAYER_NUM) - 1; // deliver leaflet to all players if necessary for event
     }
 
     return res;

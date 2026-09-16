@@ -923,7 +923,7 @@ extern int mSC_LightHouse_Event_Check(int player_no) {
     }
 
     if ((lh->days_switched_on & 0x7F) == 0x7F) {
-        if ((lh->players_quest_started & (u8)(1 << (player_no + 4))) != 0) {
+        if ((lh->players_contributed & (u8)(1 << player_no)) != 0) {
             if (lh->renew_time.month == lbRTC_JANUARY) {
                 return mSC_LIGHTHOUSE_EVENT_JAN_CONTRIBUTED;
             } else {
@@ -955,7 +955,7 @@ extern void mSC_LightHouse_Event_Clear(int player_no) {
         check = mSC_LightHouse_Event_Check(player_no);
 
         if (check == 2 || check == 4) {
-            lh->players_completed |= 0b1111;
+            lh->players_completed |= (u8)((1 << PLAYER_NUM) - 1);
         }
     }
 }
@@ -996,7 +996,7 @@ extern int mSC_LightHouse_Talk_After_Check() {
         return FALSE;
     }
 
-    return (lh->players_quest_started & 0b1111) != 0;
+    return lh->players_quest_started != 0;
 }
 
 extern void mSC_LightHouse_Quest_Start() {
@@ -1072,12 +1072,12 @@ extern void mSC_LightHouse_Switch_On() {
     player_no = Common_Get(player_no);
 
     if (player_no < mPr_FOREIGNER) {
-        lh->players_quest_started |= (u8)(1 << (player_no + 4));
+        lh->players_contributed |= (u8)(1 << player_no);
     }
 }
 
 extern void mSC_LightHouse_Delete_Player(int player_no) {
-    Save_Get(LightHouse).players_quest_started &= ~(u8)(1 << (player_no + 4));
+    Save_Get(LightHouse).players_contributed &= ~(u8)(1 << player_no);
 }
 
 extern int mSC_LightHouse_travel_check() {

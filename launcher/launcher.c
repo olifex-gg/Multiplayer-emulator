@@ -452,7 +452,7 @@ static void on_play(HWND wnd) {
 #define CLR_WAIT      RGB(0xE8, 0xB4, 0x3A)
 
 #define WIN_W 520
-#define WIN_H 512
+#define WIN_H 640 /* eight resident rows in the waiting room */
 
 /* Layout shared by both windows: the cream panel under the title. */
 #define PANEL_L 24
@@ -932,24 +932,24 @@ static void lobby_paint(HDC dc, int w, int h) {
     /* resident rows */
     y += 34;
     for (i = 0; i < ACNET_MAX_PLAYERS; i++) {
-        RECT chip = { x, y, PANEL_R - 20, y + 36 };
+        RECT chip = { x, y, PANEL_R - 20, y + 30 };
         int  has = g_lbv.slot_name[i][0] != 0;
-        draw_round(dc, chip, 18, has ? CLR_WHITE : CLR_CREAM_DK, 1, has ? CLR_WOOD : CLR_CREAM_DK, 2);
-        draw_dot(dc, x + 18, y + 18, 11, has ? (g_lbv.slot_online[i] ? CLR_ONLINE : CLR_AWAY) : CLR_CREAM);
+        draw_round(dc, chip, 15, has ? CLR_WHITE : CLR_CREAM_DK, 1, has ? CLR_WOOD : CLR_CREAM_DK, 2);
+        draw_dot(dc, x + 16, y + 15, 9, has ? (g_lbv.slot_online[i] ? CLR_ONLINE : CLR_AWAY) : CLR_CREAM);
         snprintf(line, sizeof(line), "%d", i + 1);
-        draw_text(dc, g_font_small, has ? CLR_WHITE : CLR_TEXT_SOFT, x + 8, y, 20, 36,
+        draw_text(dc, g_font_small, has ? CLR_WHITE : CLR_TEXT_SOFT, x + 6, y, 20, 30,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
         if (has) {
-            draw_text(dc, g_font_bold, CLR_TEXT, x + 40, y, 250, 36, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            draw_text(dc, g_font_bold, CLR_TEXT, x + 36, y, 250, 30, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
                       g_lbv.slot_name[i]);
-            draw_text(dc, g_font_small, g_lbv.slot_online[i] ? CLR_ONLINE : CLR_TEXT_SOFT, x + 40, y,
-                      PANEL_R - 20 - x - 56, 36, DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+            draw_text(dc, g_font_small, g_lbv.slot_online[i] ? CLR_ONLINE : CLR_TEXT_SOFT, x + 36, y,
+                      PANEL_R - 20 - x - 52, 30, DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
                       g_lbv.slot_online[i] ? "in town now" : "away");
         } else {
-            draw_text(dc, g_font_body, CLR_TEXT_SOFT, x + 40, y, 250, 36, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            draw_text(dc, g_font_body, CLR_TEXT_SOFT, x + 36, y, 250, 30, DT_LEFT | DT_VCENTER | DT_SINGLELINE,
                       g_lbv.slot_known ? "empty - a friend can move in" : "");
         }
-        y += 42;
+        y += 34;
     }
 
     /* town status and the note for friends */

@@ -15,6 +15,8 @@ extern "C" {
 #endif
 
 extern void mHm_ClearHomeInfo(int home_no);
+extern void mHm_ClearHomeInfoNoRom(int home_no);          /* multiplayer fork: for the save converter */
+extern void mHm_LoadHaniwaDefaultMessage(int home_no);
 extern void mHm_ClearAllHomeInfo();
 extern void mHm_SetNowHome();
 extern void mHm_SetDefaultPlayerRoomData(int home_no);

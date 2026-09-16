@@ -74,7 +74,8 @@ typedef struct bridge_s {
 typedef struct lighthouse_s {
     lbRTC_ymd_c renew_time;
     u8 days_switched_on;
-    u8 players_quest_started;
+    u8 players_quest_started; /* one bit per player (the original kept these in the low nibble...) */
+    u8 players_contributed;   /* ...and these in the high nibble; eight residents need a byte each) */
     u8 players_completed;
 } LightHouse_c;
 
@@ -101,7 +102,7 @@ typedef struct Save_s {
     /* 0x020498 */ mEv_event_save_c event_save_data;
     /* 0x020554 */ mEv_save_common_data_c event_save_common;
     /* 0x020688 */ mActor_name_t fruit;  /* town fruit type */
-    /* 0x02068A */ u8 house_arrangement; /* 2 bits for each player for the # of house they own */
+    /* 0x02068A */ u8 house_arrangement[PLAYER_NUM]; /* the house index each player owns (multiplayer fork) */
     /* 0x02068B */ u8 num_statues;       /* number of statues built for players who have paid off their debts */
     /* 0x02068C */ lbRTC_time_c all_grow_renew_time; /* renewal time for fg items handled by mAgrw_RenewalFgItem_ovl */
     /* 0x020694 */ PostOffice_c post_office;         /* post office data */
@@ -324,7 +325,7 @@ typedef struct common_data_s {
     /* 0X02DBAC */ int my_room_message_control_flags;
     /* 0x02DBB0 */ s16 can_look_goki_count;
     /* 0x02DBB4 */ f32 rainbow_opacity; /* current opacity of rainbow (0.0f - 1.0f) */
-    /* 0x02DBB8 */ u32 event_flags[mEv_EVENT_TYPE_NUM];
+    /* 0x02DBB8 */ u64 event_flags[mEv_EVENT_TYPE_NUM]; /* 64 bits: eight residents' saved events */
     /* 0x02DBD4 */ const xyz_t* pluss_bridge_pos; /* position of extra bridge */
     /* 0x02DBD8 */ lbRTC_time_c auto_nwrite_time; /* cached notice time used for fishing tourney results? */
     /* 0x02DBE0 */ u8 rhythym_updated;

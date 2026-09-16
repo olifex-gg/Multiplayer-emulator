@@ -2097,7 +2097,7 @@ extern int mRmTp_FurnitureIdx2FurnitureKind(int ftr_idx) {
 static int mRmTp_GetPlayerRoomIdx() {
     mActor_name_t field_id = mFI_GetFieldId();
 
-    return mFI_GET_TYPE(field_id) == mFI_FIELD_PLAYER0_ROOM ? (field_id - mFI_FIELD_PLAYER0_ROOM) & 3 : 0;
+    return mFI_GET_TYPE(field_id) == mFI_FIELD_PLAYER0_ROOM ? mFI_GET_PLAYER_ROOM_NO(field_id) : 0;
 }
 
 extern void mRmTp_CopyWallData(u8* dst, int wall_no) {
@@ -2343,7 +2343,7 @@ extern int mRmTp_Index2LightSwitchStatus(int switch_index) {
 }
 
 static int mRmTp_CheckExistMyRoomOwner(int house_no) {
-    return mPr_NullCheckPersonalID(&Save_Get(homes[house_no & 3]).ownerID) != TRUE;
+    return mPr_NullCheckPersonalID(&Save_Get(homes[house_no & mHS_HOUSE_MASK]).ownerID) != TRUE;
 }
 
 static int mRmTp_CheckMyRoomLightON(int house_idx, int check_owned) {
@@ -2395,7 +2395,7 @@ extern int mRmTp_SetDefaultLightSwitchData(int state) {
 
         return TRUE;
     } else if (state == 3) {
-        int our_house = mHS_get_arrange_idx(Common_Get(player_no) & 3);
+        int our_house = mHS_get_arrange_idx(Common_Get(player_no));
 
         l_mRmTp_switch_data = 0;
         for (i = 0; i < PLAYER_NUM; i++) {

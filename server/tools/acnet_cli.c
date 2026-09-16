@@ -99,7 +99,7 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         if (payload_len != sizeof(d)) return 0;
         memcpy(&d, payload, sizeof(d));
         printf("TOWN present=%u version=%u size=%zu", d.present, d.town_version, blob_len);
-        if (d.present && blob_len == ACNET_TOWN_SIZE && save_town_to) {
+        if (d.present && (blob_len == ACNET_TOWN_SIZE || blob_len == ACNET_LEGACY_TOWN_SIZE) && save_town_to) {
             FILE* fp = fopen(save_town_to, "wb");
             if (fp && fwrite(payload + payload_len, 1, blob_len, fp) == blob_len) {
                 printf(" saved=%s", save_town_to);

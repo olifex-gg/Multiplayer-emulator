@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end test: starts a server on a random port and drives it with the
 # CLI client. Covers login and slot assignment, founding a town, the
-# per-resident splice on upload, checksum repair, the four-resident limit,
-# chat relay, and world-authority migration.
+# per-resident splice on upload, checksum repair, the eight-resident limit,
+# chat relay, world-authority migration, and a town still stored in the
+# four-resident layout.
 set -euo pipefail
 
 SERVER=${1:?server binary}
@@ -37,7 +38,23 @@ wait_for_server() {
 }
 
 mkdir -p "$TMP/data"
-echo "$INVITE" > "$TMP/data/invites.txt"
+printf '%s\nlegacytown\n' "$INVITE" > "$TMP/data/invites.txt"
+# A town as the four-resident builds stored it: resident 0 has a character,
+# blocks 1-3 are empty. Served as it is, and replaced by the first save.
+mkdir -p "$TMP/data/towns/legacytown"
+python3 - "$TMP/data/towns/legacytown/town.gci" "$HERE" <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[2])
+from mktown import C
+main = C["ACNET_GCI_HEADER_SIZE"] + C["ACNET_LEGACY_SAVE_MAIN_OFFSET"]
+blob = bytearray(C["ACNET_GCI_HEADER_SIZE"] + C["ACNET_LEGACY_GCI_PAYLOAD_SIZE"])
+blob[0:6] = b"GAFE01"
+blob[8:8 + 19] = b"DobutsunomoriP_MURA"
+for i in range(C["ACNET_LEGACY_MAX_PLAYERS"]):
+    a = main + C["ACNET_LEGACY_PRIVATE_ARRAY_OFFSET"] + i * C["ACNET_PRIVATE_SIZE"]
+    blob[a:a + C["ACNET_PRIVATE_SIZE"]] = (b"\x50" if i == 0 else b"\xff") * C["ACNET_PRIVATE_SIZE"]
+open(sys.argv[1], "wb").write(blob)
+PYEOF
 "$SERVER" --port "$PORT" --data "$TMP/data" --verbose > "$TMP/server.log" 2>&1 &
 SPID=$!
 wait_for_server
@@ -82,17 +99,21 @@ echo "8. alice downloads: her block survived, bob's changed, carol's taken from 
 out=$(cli --name alice --download "$TMP/dl_alice2.gci")
 grep -q "TOWN present=1 version=2" <<<"$out" || fail "alice download: $out"
 $MK check "$TMP/dl_alice2.gci" | tee "$TMP/check.txt"
-grep -q "^OK slot0=0xA0/0xB0 slot1=0xBB/0xBB slot2=0xCC/0xCC slot3=0xA3/0xB3" "$TMP/check.txt" || fail "splice result wrong"
+grep -q "^OK slot0=0xA0/0xB0 slot1=0xBB/0xBB slot2=0xCC/0xCC slot3=0xA3/0xB3 slot4=0xA4/0xB4 slot5=0xA5/0xB5 slot6=0xA6/0xB6 slot7=0xA7/0xB7" "$TMP/check.txt" || fail "splice result wrong"
 
 echo "9. a malformed upload is rejected and does not bump the version"
 head -c 1000 "$TMP/townA.gci" > "$TMP/short.gci"
 out=$(cli --name alice --upload "$TMP/short.gci")
 grep -q "ACK status=1 version=2" <<<"$out" || fail "short upload: $out"
 
-echo "10. a resident keeps their slot across logins; the fifth name is refused"
+echo "10. a resident keeps their slot across logins; the ninth name is refused"
 out=$(cli --name bob); grep -q "slot=1" <<<"$out" || fail "bob slot changed: $out"
 out=$(cli --name dave); grep -q "slot=3" <<<"$out" || fail "dave slot: $out"
-out=$(cli --name erin || true); grep -q "REJECT reason=3" <<<"$out" || fail "expected TOWN_FULL: $out"
+out=$(cli --name erin); grep -q "slot=4" <<<"$out" || fail "erin slot: $out"
+out=$(cli --name frank); grep -q "slot=5" <<<"$out" || fail "frank slot: $out"
+out=$(cli --name gina); grep -q "slot=6" <<<"$out" || fail "gina slot: $out"
+out=$(cli --name hank); grep -q "slot=7" <<<"$out" || fail "hank slot: $out"
+out=$(cli --name ivan || true); grep -q "REJECT reason=3" <<<"$out" || fail "expected TOWN_FULL: $out"
 
 echo "11. chat relay and world-authority migration"
 cli --name alice --wait 3 > "$TMP/alice_wait.txt" &
@@ -138,8 +159,8 @@ wait "$DPID" || true
 out=$(cli --status)
 grep -q "^SLOT 3 dave away" <<<"$out" || fail "dave should still own his slot: $out"
 # The status queries must not have consumed a resident slot.
-out=$(cli --name erin || true)
-grep -q "REJECT reason=3" <<<"$out" || fail "town should be full after four residents: $out"
+out=$(cli --name ivan || true)
+grep -q "REJECT reason=3" <<<"$out" || fail "town should be full after eight residents: $out"
 
 echo "14. a resident's save is pushed live to the others (character + house blocks)"
 cli --name alice --wait 4 > "$TMP/alice_live.txt" &
@@ -158,9 +179,11 @@ out=$(cli --name bob --land 2,3,4,5,4660)
 wait "$LAPID" || true
 grep -q "LAND count=1 cell=2,3,4,5,4660" "$TMP/alice_land.txt" || fail "alice got no land cell: $(cat "$TMP/alice_land.txt")"
 sleep 6   # server flushes live land edits to disk after 5 s
-python3 - "$TMP/data/towns/$INVITE/town.gci" <<'PYEOF' || fail "land cell not in stored town"
+python3 - "$TMP/data/towns/$INVITE/town.gci" "$HERE" <<'PYEOF' || fail "land cell not in stored town"
 import sys
-FG_ABS = 64 + 0x26000 + 0x137A8
+sys.path.insert(0, sys.argv[2])
+from mktown import C
+FG_ABS = C["MAIN_ABS"] + C["ACNET_FG_OFFSET"]
 idx = ((3 * 5 + 2) * 16 + 5) * 16 + 4
 b = open(sys.argv[1], 'rb').read()
 v = (b[FG_ABS + idx * 2] << 8) | b[FG_ABS + idx * 2 + 1]
@@ -219,9 +242,11 @@ cli --name bob --land 2,3,4,5,61717 --wait 1 > /dev/null     # 0xF115 = DUMMY_DU
 wait "$RTPID" || true
 ! grep -q "LAND" "$TMP/alice_rt.txt" || fail "a placeholder cell was relayed: $(cat "$TMP/alice_rt.txt")"
 sleep 6
-python3 - "$TMP/data/towns/$INVITE/town.gci" <<'PYEOF' || fail "placeholder cell reached the stored town"
+python3 - "$TMP/data/towns/$INVITE/town.gci" "$HERE" <<'PYEOF' || fail "placeholder cell reached the stored town"
 import sys
-FG_ABS = 64 + 0x26000 + 0x137A8
+sys.path.insert(0, sys.argv[2])
+from mktown import C
+FG_ABS = C["MAIN_ABS"] + C["ACNET_FG_OFFSET"]
 idx = ((3 * 5 + 2) * 16 + 5) * 16 + 4
 b = open(sys.argv[1], 'rb').read()
 v = (b[FG_ABS + idx * 2] << 8) | b[FG_ABS + idx * 2 + 1]
@@ -290,5 +315,19 @@ grep -q "PONG nonce=12648430 server_ms=[0-9]* tz=-\?[0-9]*" <<<"$out" || fail "n
 tz=$(grep -o "WELCOME .* tz=-\?[0-9]*" <<<"$out" | grep -o "[-0-9]*$")
 want=$(python3 -c "import time; print(-(time.altzone if time.localtime().tm_isdst > 0 else time.timezone) // 60)")
 [[ "$tz" == "$want" ]] || fail "server time zone $tz, this machine says $want"
+
+echo "25. a town stored by the four-resident builds is served as it is, its slots read at the old offsets, and replaced by the first save"
+lcli() { "$CLI" --server 127.0.0.1 --port "$PORT" --invite legacytown --quiet "$@"; }
+grep -q "four-resident town file" "$TMP/server.log" || true
+out=$(lcli --name zed --download "$TMP/dl_legacy.gci")
+grep -q "WELCOME client_id=[0-9]* slot=1 .*town_present=1" <<<"$out" || fail "zed should get slot 1, the first empty block of the old town: $out"
+cmp "$TMP/dl_legacy.gci" "$TMP/data/towns/legacytown/town.gci" || fail "the old town must be served byte for byte"
+[[ $(stat -c %s "$TMP/dl_legacy.gci") -eq $((64 + 0x72000)) ]] || fail "old town download has the wrong size"
+$MK make "$TMP/townL.gci" --fill 0x60
+out=$(lcli --name zed --upload "$TMP/townL.gci")
+grep -q "ACK status=0 version=1" <<<"$out" || fail "zed's upload of the new layout: $out"
+[[ $(stat -c %s "$TMP/data/towns/legacytown/town.gci") -eq $((64 + 0xA2000)) ]] || fail "the stored town was not replaced by the eight-resident layout"
+$MK check "$TMP/data/towns/legacytown/town.gci" | grep -q "^OK slot0=0x60/0x70" || fail "upgraded town wrong"
+grep -q "now stored in the eight-resident layout" "$TMP/server.log" || fail "server did not report the upgrade"
 
 echo "ALL PASSED"

@@ -141,7 +141,8 @@ can splice per-resident data by offset without understanding the game.
 
 ### Limits
 
-- Four players per town. That is the engine's resident limit. More than four means a
+- Eight players per town (Sept 2026; it was four, the engine's original resident limit,
+  until the save layout was widened -- see "Eight residents" in HANDOFF.md). More means a
   second town on the same server, or guest visitors via the passport model later.
 - Trust is at the friend-group level. The server bounds-checks and rate-limits, and a
   client can only ever write its own resident block directly, but deep rule validation

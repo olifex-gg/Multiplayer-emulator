@@ -395,7 +395,7 @@ static void mFR_sort_record() {
 }
 
 static int mFR_Fishmail_send_post(PersonalID_c* pid, Mail_c* mail) {
-    int arrange_idx = mHS_get_arrange_idx(mPr_GetPrivateIdx(pid)) & 3;
+    int arrange_idx = mHS_get_arrange_idx(mPr_GetPrivateIdx(pid));
     int free_mail_idx = mMl_chk_mail_free_space(Save_Get(homes[arrange_idx]).mailbox, HOME_MAILBOX_SIZE);
 
     if (free_mail_idx >= 0) {

@@ -3651,7 +3651,7 @@ extern int mMkRm_MarkRoomOvl(int player_no) {
         mActor_name_t* layer_ut_info[2];
         int points;
 
-        int house_no = mHS_get_arrange_idx(player_no) & 3;
+        int house_no = mHS_get_arrange_idx(player_no);
         mHm_hs_c* house = Save_GetPointer(homes[house_no]);
         mActor_name_t base_recommendation = EMPTY_NO;
         mActor_name_t theme_recommendation = EMPTY_NO;

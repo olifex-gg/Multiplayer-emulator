@@ -623,7 +623,7 @@ static void swap_mEv_weekly(mEv_weekly_u* wk) {
 static void swap_mEv_event_save(mEv_event_save_c* es) {
     swap_mEv_special(&es->special);
     swap_mEv_weekly(&es->weekly);
-    swap32(&es->flags);
+    swap64(&es->flags);
 }
 
 static void swap_mEv_area(mEv_area_c* area) {

@@ -14,10 +14,13 @@
 extern "C" {
 #endif
 
-#define mCD_LAND_SAVE_SIZE 0x72000
+/* Multiplayer fork: eight residents. The town file is the "others" block
+ * (mail, designs, diary; 0x32000) plus two copies of the sector-aligned
+ * Save (0x38000 each). pc_m_card.c checks these against the structs. */
+#define mCD_LAND_SAVE_SIZE 0xA2000
 #define mCD_ORIGINAL_SAVE_SIZE 0xE000
 #define mCD_MAIL_SAVE_SIZE 0xC000
-#define mCD_DIARY_SAVE_SIZE 0xC000
+#define mCD_DIARY_SAVE_SIZE 0x18000
 #define mCD_PRESENT_SAVE_SIZE 0x2000
 #define mCD_PLAYER_SAVE_SIZE 0x6000
 /* Offset to start of save data when loading from card.

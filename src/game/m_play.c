@@ -10,6 +10,7 @@
 #ifdef TARGET_PC
 #include "ac_puppet.h"
 #include "m_chat_bubble.h"
+#include "pc_save_convert.h"
 #endif
 #include "boot.h"
 #include "version.h"
@@ -612,6 +613,7 @@ static void Game_play_move(GAME* game) {
     game->doing_point = 3;
     watch_my_step_move(play);
 #ifdef TARGET_PC
+    pc_save_convert_late_fixup(); /* a converted town finishes its setup here */
     mCB_move(play); /* multiplayer chat: messages through the game's speech window */
 #endif
     game->doing_point = 4;

@@ -703,19 +703,19 @@ int Museum_Insect_GetMsgNo(ACTOR* actorx) {
     mMsg_Set_item_str_art(mMsg_Get_base_window_p(), mMsg_ITEM_STR0, item_name, ARRAY_COUNT(item_name),
                           mIN_get_item_article(insect_no));
 
-    if (insect_caught_by >= 1 && insect_caught_by <= 4) {
+    if (mMmd_DONATOR_EXISTS(insect_caught_by)) {
         mMsg_Set_free_str(mMsg_Get_base_window_p(), mMsg_FREE_STR0,
                           common_data.save.save.private_data[insect_caught_by - 1].player_ID.player_name, 8);
     }
 
     if (actor->_2F7C < actor->_2F78 - 1) {
-        if (insect_caught_by >= 1 && insect_caught_by <= 4) {
+        if (mMmd_DONATOR_EXISTS(insect_caught_by)) {
             msgNo = MSG_12194;
         } else {
             msgNo = MSG_12195;
         }
     } else {
-        if (insect_caught_by >= 1 && insect_caught_by <= 4) {
+        if (mMmd_DONATOR_EXISTS(insect_caught_by)) {
             msgNo = MSG_12191;
         } else {
             msgNo = MSG_12192;

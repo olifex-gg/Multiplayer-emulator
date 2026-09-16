@@ -28,20 +28,26 @@ enum {
     mMmd_DISPLAY_NUM
 };
 
+/* A donor is stored in four bits per item: 0 nobody, 1-8 the resident
+ * (multiplayer fork: eight of them), 9 a resident who has since left. */
 enum {
     mMmd_DONATOR_NONE,
     mMmd_DONATOR_PLAYER1,
     mMmd_DONATOR_PLAYER2,
     mMmd_DONATOR_PLAYER3,
     mMmd_DONATOR_PLAYER4,
+    mMmd_DONATOR_PLAYER5,
+    mMmd_DONATOR_PLAYER6,
+    mMmd_DONATOR_PLAYER7,
+    mMmd_DONATOR_PLAYER8,
     mMmd_DONATOR_DELETED_PLAYER,
 
     mMmd_DONATOR_NUM
 };
 
 #define mMmd_IS_DONATED(donator) ((donator) >= mMmd_DONATOR_PLAYER1 && (donator) <= mMmd_DONATOR_DELETED_PLAYER)
-#define mMmd_DONATOR_EXISTS(donator) ((donator) >= mMmd_DONATOR_PLAYER1 && (donator) <= mMmd_DONATOR_PLAYER4)
-#define mMmd_DONATOR_PLR_IDX(donator) (((donator)-1) & 3)
+#define mMmd_DONATOR_EXISTS(donator) ((donator) >= mMmd_DONATOR_PLAYER1 && (donator) <= mMmd_DONATOR_PLAYER8)
+#define mMmd_DONATOR_PLR_IDX(donator) (((donator)-1) & (PLAYER_NUM - 1))
 
 enum {
     mMmd_CATEGORY_FOSSIL,

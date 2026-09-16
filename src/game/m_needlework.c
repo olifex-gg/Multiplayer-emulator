@@ -18,7 +18,7 @@ static void mNW_InitMyOriginalPallet(int player_no) {
     int i;
 
     for (i = 0; i < mPr_ORIGINAL_DESIGN_COUNT; i++) {
-        Save_Set(private_data[player_no & 3].my_org[i & 7].palette, pal_table[i]);
+        Save_Set(private_data[player_no & (PLAYER_NUM - 1)].my_org[i & 7].palette, pal_table[i]);
     }
 }
 
@@ -30,7 +30,7 @@ static void mNW_InitMyOriginalPallet(int player_no) {
 static void mNW_InitMyOriginalName(int player_no) {
     int i;
 
-    player_no &= 3;
+    player_no &= (PLAYER_NUM - 1);
     for (i = 0; i < mPr_ORIGINAL_DESIGN_COUNT; i++) {
         /* TODO: define for the string index? */
         mString_Load_StringFromRom(Save_Get(private_data[player_no].my_org[i & 7].name), mNW_ORIGINAL_DESIGN_NAME_LEN,
@@ -46,7 +46,7 @@ static void mNW_InitMyOriginalName(int player_no) {
 static void mNW_InitMyOriginalTexture(int player_no) {
     int i;
 
-    player_no &= 3;
+    player_no &= (PLAYER_NUM - 1);
     for (i = 0; i < mNW_DEFAULT_ORIGINAL_TEX_NUM; i++) {
         _JW_GetResourceAram(JW_GetAramAddress(27) + i * mNW_DESIGN_TEX_SIZE,
                             Save_Get(private_data[player_no].my_org[i & 7].design.data), mNW_DESIGN_TEX_SIZE);
@@ -72,9 +72,9 @@ extern void mNW_InitMyOriginal() {
 extern void mNW_InitOneMyOriginal(int player_no) {
     int i;
 
-    mNW_InitMyOriginalPallet(player_no & 3);
-    mNW_InitMyOriginalName(player_no & 3);
-    mNW_InitMyOriginalTexture(player_no & 3);
+    mNW_InitMyOriginalPallet(player_no & (PLAYER_NUM - 1));
+    mNW_InitMyOriginalName(player_no & (PLAYER_NUM - 1));
+    mNW_InitMyOriginalTexture(player_no & (PLAYER_NUM - 1));
 
     for (i = mNW_DEFAULT_ORIGINAL_TEX_NUM; i < mPr_ORIGINAL_DESIGN_COUNT; i++) {
         mNW_InitOriginalData(Save_Get(private_data[player_no].my_org + (i & 7)));

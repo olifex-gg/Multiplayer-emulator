@@ -9,7 +9,7 @@ static int fNM2_GetPalletIndex(FTR_ACTOR* ftr_actor) {
         if (mFI_GET_TYPE(field_id) == mFI_FIELD_PLAYER0_ROOM) {
             int arrange_idx = mFI_GetFieldId() - mFI_FIELD_PLAYER0_ROOM;
 
-            return Save_Get(homes[arrange_idx & 3]).outlook_pal;
+            return Save_Get(homes[arrange_idx & mHS_HOUSE_MASK]).outlook_pal;
         }
     } else {
         int player_no = Common_Get(player_no);

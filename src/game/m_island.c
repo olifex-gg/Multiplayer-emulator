@@ -623,7 +623,7 @@ static void mISL_gc_to_agb_animal(mISL_Animal_agb_c* agb, Animal_c* gc) {
     mISL_short(&agb->present_cloth, &gc->present_cloth, 1);
     bcopy(gc->animal_relations, agb->animal_relations, ANIMAL_NUM_MAX);
 
-    for (i = 0; i < ANIMAL_HP_MAIL_NUM; i++) {
+    for (i = 0; i < mISL_AGB_HP_MAIL_NUM; i++) {
         mISL_gc_to_agb_hp_mail(&agb->hp_mail[i], &gc->hp_mail[i]);
     }
 }
@@ -654,7 +654,7 @@ static void mISL_agb_to_gc_animal(Animal_c* gc, mISL_Animal_agb_c* agb) {
     mISL_short(&gc->present_cloth, &agb->present_cloth, 1);
     bcopy(agb->animal_relations, gc->animal_relations, ANIMAL_NUM_MAX);
 
-    for (i = 0; i < ANIMAL_HP_MAIL_NUM; i++) {
+    for (i = 0; i < mISL_AGB_HP_MAIL_NUM; i++) {
         mISL_agb_to_gc_hp_mail(&gc->hp_mail[i], &agb->hp_mail[i]);
     }
 }

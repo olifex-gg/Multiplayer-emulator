@@ -162,6 +162,8 @@ typedef struct agb_quest_contest_s {
   /* 0x28 */ mQst_contest_info_u info; /* contest info for flower & letter quests */
 } mISL_quest_contest_c;
 
+#define mISL_AGB_HP_MAIL_NUM 4 /* the GBA island format is fixed; the town's Animal_c has PLAYER_NUM */
+
 typedef struct agb_animal_s {
   /* 0x000 */ AnmPersonalID_c id; /* this villager's ID */
   /* 0x010 */ mISL_Anmmem_agb_c memories[ANIMAL_MEMORY_NUM]; /* memories of players who've spoken to this villager */
@@ -188,7 +190,7 @@ typedef struct agb_animal_s {
   /* 0x936 */ u8 pad_936[6];
   /* 0x93C */ u8 animal_relations[ANIMAL_NUM_MAX]; /* relationships between all villagers in town, starts at 128 which is neutral */
   /* 0x94B */ u8 pad_94B[5];
-  /* 0x950 */ AnmHPMail_c hp_mail[ANIMAL_HP_MAIL_NUM]; /* mail password info storage */
+  /* 0x950 */ AnmHPMail_c hp_mail[mISL_AGB_HP_MAIL_NUM]; /* mail password info storage (the GBA format keeps four) */
   /* 0x9C0 */ u8 _9C0[24]; /* unknown usage/unused */
 } mISL_Animal_agb_c;
 

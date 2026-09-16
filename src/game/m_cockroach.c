@@ -115,7 +115,7 @@ extern void mCkRh_SetGoingOutCottageTime(int scene_id) {
 extern void mCkRh_SavePlayTime(int player_no) {
     if (player_no < PLAYER_NUM) {
         int home_no = mHS_get_arrange_idx(player_no);
-        Save_Set(homes[home_no & 3].goki.time, Common_Get(time.rtc_time));
+        Save_Set(homes[home_no & mHS_HOUSE_MASK].goki.time, Common_Get(time.rtc_time));
     }
 }
 
@@ -132,7 +132,7 @@ static int mCkRh_DaysGapCompareWithSaveTime(int player_no) {
     int interval;
 
     if (player_no < PLAYER_NUM) {
-        homeid = mHS_get_arrange_idx(player_no) & 3;
+        homeid = mHS_get_arrange_idx(player_no);
         goki_time.year = Save_Get(homes[homeid].goki.time.year);
         goki_time.month = Save_Get(homes[homeid].goki.time.month);
         goki_time.day = Save_Get(homes[homeid].goki.time.day);
@@ -190,7 +190,7 @@ extern void mCkRh_DecideNowGokiFamilyCount(int player_no) {
     /* player must live in town */
     if (player_no < PLAYER_NUM) {
         day_gap = mCkRh_DaysGapCompareWithSaveTime(player_no);
-        home_no = mHS_get_arrange_idx(player_no) & 3;
+        home_no = mHS_get_arrange_idx(player_no);
         if (day_gap > mCkRh_INTERVAL_DAYS) {
             goki_num = Save_Get(homes[home_no].goki.num);
             count = goki_num > 0 ? day_gap : day_gap - mCkRh_INTERVAL_DAYS;
@@ -230,7 +230,7 @@ extern int mCkRh_PlussGokiN_NowRoom(int count, int scene_no) {
     if (mFI_IS_PLAYER_ROOM(fieldid)) {
         int player_no = Common_Get(player_no);
         int house_field_id = mFI_GET_PLAYER_ROOM_NO(fieldid);
-        int home_id = mHS_get_arrange_idx(player_no) & 3;
+        int home_id = mHS_get_arrange_idx(player_no);
         if ((player_no < PLAYER_NUM) && (house_field_id == home_id)) {
             Save_Set(homes[home_id].goki.num, mCkRh_GokiFamilyCount2Good(count + Save_Get(homes[home_id].goki.num)));
             return TRUE;
@@ -254,7 +254,7 @@ extern int mCkRh_MinusGokiN_NowRoom(int count, int scene_id) {
     if (mFI_IS_PLAYER_ROOM(field_id)) {
         int player_no = Common_Get(player_no);
         int house_field_id = mFI_GET_PLAYER_ROOM_NO(field_id);
-        int home_no = mHS_get_arrange_idx(player_no) & 3;
+        int home_no = mHS_get_arrange_idx(player_no);
         if (player_no < PLAYER_NUM && house_field_id == home_no) {
             Save_Set(homes[home_no].goki.num, mCkRh_GokiFamilyCount2Good(Save_Get(homes[home_no].goki.num) - count));
             return TRUE;

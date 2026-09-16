@@ -172,6 +172,10 @@ static int mPr_GetRandomOriginalFace() {
         }
     }
 
+    if (player_exist_num >= mPr_FACE_TYPE_NUM) {
+        /* Eight residents, eight faces: the new one gets any face. */
+        return mPr_GetRandomFace();
+    }
     face = RANDOM(mPr_FACE_TYPE_NUM - player_exist_num);
     for (player_exist_num; player_exist_num > 0; player_exist_num--) {
         pr2 = priv;

@@ -220,20 +220,36 @@ static mActor_name_t l_proom_cottage_tmp[UT_X_NUM * UT_Z_NUM] = {
  *
  * @param home_no Index of the home which will be cleared (0-3).
  **/
-extern void mHm_ClearHomeInfo(int home_no) {
+/* The gyroid's default message for visitors, from the ROM. Split out
+ * (multiplayer fork) because the save converter clears houses before the
+ * ROM loader's heaps exist and loads the message on the first play frame. */
+extern void mHm_LoadHaniwaDefaultMessage(int home_no) {
     static int haniwa_msg[HANIWA_MSG_LINES] = { 0x76A, 0x76B, 0x76C,
                                                 0x76D }; /* These are probably defines somewhere from auto-gen */
+    mHm_hs_c* home = Save_GetPointer(homes[home_no & mHS_HOUSE_MASK]);
+    u8 haniwa_msg_buf[HANIWA_MESSAGE_LEN];
+    u8* haniwa_msg_p = home->haniwa.message;
+    int j;
 
+    for (j = 0; j < HANIWA_MSG_LINES; j++) {
+        int len;
+
+        mString_Load_StringFromRom(haniwa_msg_buf, HANIWA_MESSAGE_LEN, haniwa_msg[j]);
+        len = mMl_strlen(haniwa_msg_buf, HANIWA_MESSAGE_LEN, CHAR_SPACE);
+        haniwa_msg_buf[len] = CHAR_NEW_LINE;
+        mem_copy(haniwa_msg_p, haniwa_msg_buf, len + 1);
+        haniwa_msg_p += len + 1;
+    }
+}
+
+static void mHm_ClearHomeInfo_sub(int home_no, int load_message) {
     int no;
     mHm_hs_c* home;
-    u8 haniwa_msg_buf[HANIWA_MESSAGE_LEN];
     u16* item_p;
     u16* src_p;
     int i;
-    u8* haniwa_msg_p;
-    int j;
 
-    no = home_no & 3;
+    no = home_no & mHS_HOUSE_MASK;
     home = Save_GetPointer(homes[no]);
     bzero(home, sizeof(mHm_hs_c));
     mPr_ClearPersonalID(&home->ownerID);
@@ -255,24 +271,26 @@ extern void mHm_ClearHomeInfo(int home_no) {
     }
 
     mMl_clear_mail_box(home->mailbox, HOME_MAILBOX_SIZE);
-    Save_Set(homes[no].outlook_pal, no);
-    Save_Set(homes[no].next_outlook_pal, no);
+    Save_Set(homes[no].outlook_pal, no % mHS_HOUSES_PER_ACRE); /* four roof colours, eight houses */
+    Save_Set(homes[no].next_outlook_pal, no % mHS_HOUSES_PER_ACRE);
     mCkRh_InitGokiSaveData_1Room_ByHomeData(home);
     mHm_SetDefaultPlayerRoomData(no);
 
-    haniwa_msg_p = home->haniwa.message;
-    for (j = 0; j < HANIWA_MSG_LINES; j++) {
-        int len;
-
-        mString_Load_StringFromRom(haniwa_msg_buf, HANIWA_MESSAGE_LEN, haniwa_msg[j]);
-        len = mMl_strlen(haniwa_msg_buf, HANIWA_MESSAGE_LEN, CHAR_SPACE);
-        haniwa_msg_buf[len] = CHAR_NEW_LINE;
-        mem_copy(haniwa_msg_p, haniwa_msg_buf, len + 1);
-        haniwa_msg_p += len + 1;
+    if (load_message) {
+        mHm_LoadHaniwaDefaultMessage(no);
     }
 
     Save_Set(keep_house_size[no], 0);
     Save_Set(homes[no].door_original, 0xFF);
+}
+
+extern void mHm_ClearHomeInfo(int home_no) {
+    mHm_ClearHomeInfo_sub(home_no, TRUE);
+}
+
+/* The same without the ROM read; mHm_LoadHaniwaDefaultMessage completes it. */
+extern void mHm_ClearHomeInfoNoRom(int home_no) {
+    mHm_ClearHomeInfo_sub(home_no, FALSE);
 }
 
 /**
@@ -313,7 +331,11 @@ static mHm_player_room_default_data_c l_mHm_player_room_default_data[PLAYER_NUM]
     { 3, 38, 4, 1, FTR_START(FTR_SUM_CASSE01) },  /* Top-left house, stone wall & old flooring */
     { 41, 42, 4, 1, FTR_START(FTR_SUM_CASSE01) }, /* Top-right house, wood panelling & steel flooring */
     { 55, 5, 4, 1, FTR_START(FTR_SUM_CASSE01) },  /* Bottom-left house, shanty wall & birch flooring */
-    { 42, 34, 4, 1, FTR_START(FTR_SUM_CASSE01) }  /* Bottom-right house, concrete wall & charcoal tile */
+    { 42, 34, 4, 1, FTR_START(FTR_SUM_CASSE01) }, /* Bottom-right house, concrete wall & charcoal tile */
+    { 3, 38, 4, 1, FTR_START(FTR_SUM_CASSE01) },  /* Second house acre (multiplayer fork): the same four looks */
+    { 41, 42, 4, 1, FTR_START(FTR_SUM_CASSE01) },
+    { 55, 5, 4, 1, FTR_START(FTR_SUM_CASSE01) },
+    { 42, 34, 4, 1, FTR_START(FTR_SUM_CASSE01) }
 };
 
 /**
@@ -324,19 +346,19 @@ static mHm_player_room_default_data_c l_mHm_player_room_default_data[PLAYER_NUM]
 extern void mHm_SetDefaultPlayerRoomData(int home_no) {
     int i;
 
-    int ut_x = l_mHm_player_room_default_data[home_no & 3].item_ut_x;
-    int ut_z = l_mHm_player_room_default_data[home_no & 3].item_ut_z;
+    int ut_x = l_mHm_player_room_default_data[home_no & mHS_HOUSE_MASK].item_ut_x;
+    int ut_z = l_mHm_player_room_default_data[home_no & mHS_HOUSE_MASK].item_ut_z;
 
-    Save_Set(homes[home_no & 3].floors[mHm_ROOM_MAIN].layer_main.items[ut_z][ut_x],
-             l_mHm_player_room_default_data[home_no & 3].item);
-    Save_Set(homes[home_no & 3].floors[mHm_ROOM_MAIN].layer_main.items[1][1], FTR_START(FTR_NOG_MIKANBOX));
-    Save_Set(homes[home_no & 3].floors[mHm_ROOM_MAIN].layer_secondary.items[1][1], ITM_DIARY00);
+    Save_Set(homes[home_no & mHS_HOUSE_MASK].floors[mHm_ROOM_MAIN].layer_main.items[ut_z][ut_x],
+             l_mHm_player_room_default_data[home_no & mHS_HOUSE_MASK].item);
+    Save_Set(homes[home_no & mHS_HOUSE_MASK].floors[mHm_ROOM_MAIN].layer_main.items[1][1], FTR_START(FTR_NOG_MIKANBOX));
+    Save_Set(homes[home_no & mHS_HOUSE_MASK].floors[mHm_ROOM_MAIN].layer_secondary.items[1][1], ITM_DIARY00);
 
     for (i = 0; i < mHm_ROOM_NUM; i++) {
-        Save_Set(homes[home_no & 3].floors[i].wall_floor.flooring_idx,
-                 l_mHm_player_room_default_data[home_no & 3].floor_num);
-        Save_Set(homes[home_no & 3].floors[i].wall_floor.wallpaper_idx,
-                 l_mHm_player_room_default_data[home_no & 3].wall_num);
+        Save_Set(homes[home_no & mHS_HOUSE_MASK].floors[i].wall_floor.flooring_idx,
+                 l_mHm_player_room_default_data[home_no & mHS_HOUSE_MASK].floor_num);
+        Save_Set(homes[home_no & mHS_HOUSE_MASK].floors[i].wall_floor.wallpaper_idx,
+                 l_mHm_player_room_default_data[home_no & mHS_HOUSE_MASK].wall_num);
     }
 }
 

@@ -112,14 +112,18 @@ enum field_room {
     mFI_FIELD_PLAYER1_ROOM,
     mFI_FIELD_PLAYER2_ROOM,
     mFI_FIELD_PLAYER3_ROOM,
+    mFI_FIELD_PLAYER4_ROOM, /* multiplayer fork: eight houses */
+    mFI_FIELD_PLAYER5_ROOM,
+    mFI_FIELD_PLAYER6_ROOM,
+    mFI_FIELD_PLAYER7_ROOM,
 
     /* TODO: others */
 };
 
-#define mFI_GET_PLAYER_ROOM_NO(field_id) (((field_id) - mFI_FIELD_PLAYER0_ROOM) & 3)
-#define mFI_IS_PLAYER_ROOM(field_id)                                                 \
-    ((field_id) == mFI_FIELD_PLAYER0_ROOM || (field_id) == mFI_FIELD_PLAYER1_ROOM || \
-     (field_id) == mFI_FIELD_PLAYER2_ROOM || (field_id) == mFI_FIELD_PLAYER3_ROOM)
+#define mFI_PLAYER_ROOM_NUM 8 /* == mHS_HOUSE_NUM */
+#define mFI_GET_PLAYER_ROOM_NO(field_id) (((field_id) - mFI_FIELD_PLAYER0_ROOM) & (mFI_PLAYER_ROOM_NUM - 1))
+#define mFI_IS_PLAYER_ROOM(field_id) \
+    ((field_id) >= mFI_FIELD_PLAYER0_ROOM && (field_id) < mFI_FIELD_PLAYER0_ROOM + mFI_PLAYER_ROOM_NUM)
 
 /* "wade" between acres (acre transition) */
 enum player_wade_state {

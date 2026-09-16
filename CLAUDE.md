@@ -1,8 +1,9 @@
 # Multiplayer Animal Crossing — project instructions
 
 Fork of the ACGC-PC-Port native PC port of the Animal Crossing (GameCube, USA `GAFE01`)
-decompilation, adding real-time online multiplayer: up to four people play as the four
-residents of **one shared town**, at the same time, over the internet.
+decompilation, adding real-time online multiplayer: up to eight people play as the eight
+residents of **one shared town**, at the same time, over the internet. (The original game
+had four; `PLAYER_NUM` is 8 here and the save layout changed with it -- see rule 16.)
 
 Read `docs/MULTIPLAYER.md` first — it is the design and decision record. Read
 `docs/HANDOFF.md` for the current state of play, what is broken right now, and the
@@ -175,3 +176,16 @@ These each cost a debugging cycle. Do not regress them.
     everyone's town after three seconds. Incoming changes (land, blocks) simply queue
     until the pause ends, which is fine. Anything new that must keep flowing while paused
     goes in the stream function, not the update function.
+16. **Eight residents, and the save layout that comes with them.** `PLAYER_NUM` is 8, so
+    `Save_t` is 0x37620 bytes, the town file 0xA2040, and every per-player field grew:
+    `house_arrangement` is a byte per player, the saved-event flags are 64 bits, the
+    lighthouse's players are a byte each, K.K.'s flags are 32 bits, museum donors run 1-8
+    with 9 for "left town", signboard ids carry three bits of player. `net/protocol.h`
+    holds the new offsets and `m_puppet.c_inc` checks every one against the structs at
+    compile time, so a layout change fails the build instead of the server. Old town files
+    (0x72040 bytes) are converted on load by `pc/src/pc_save_convert.c` from the layout
+    recorded in `pc_save_legacy_layout.h` (generated from the four-player headers with the
+    real compiler; never hand-edit it), the four-resident file is kept beside the new one
+    as `.before-eight`, and the server serves such a town as it is until the first save
+    replaces it. Anything that changes `Save_t` again needs the same treatment: record the
+    layout before and after, convert, assert.

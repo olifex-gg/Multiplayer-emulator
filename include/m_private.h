@@ -41,7 +41,11 @@ enum {
     mPr_PLAYER_1,
     mPr_PLAYER_2,
     mPr_PLAYER_3,
-    mPr_FOREIGNER,
+    mPr_PLAYER_4,
+    mPr_PLAYER_5,
+    mPr_PLAYER_6,
+    mPr_PLAYER_7,
+    mPr_FOREIGNER, /* == PLAYER_NUM: the visitor from another town */
 
     mPr_PLAYER_NUM
 };

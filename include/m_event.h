@@ -164,41 +164,68 @@ enum events {
     mEv_SAVED_RENEWSHOP = (int)mEv_SET(mEv_SAVED_EVENT, 0), /* renew shop */
     mEv_SAVED_UNK1,                                         /* unused */
 
+    /* One entry per resident in each group (multiplayer fork: eight, so the
+     * saved flags word is 64 bits wide). */
+
     /* intro through chores */
     mEv_SAVED_FIRSTJOB_PLR0,
     mEv_SAVED_FIRSTJOB_PLR1,
     mEv_SAVED_FIRSTJOB_PLR2,
     mEv_SAVED_FIRSTJOB_PLR3,
+    mEv_SAVED_FIRSTJOB_PLR4,
+    mEv_SAVED_FIRSTJOB_PLR5,
+    mEv_SAVED_FIRSTJOB_PLR6,
+    mEv_SAVED_FIRSTJOB_PLR7,
 
     /* selecting house */
     mEv_SAVED_FIRSTINTRO_PLR0,
     mEv_SAVED_FIRSTINTRO_PLR1,
     mEv_SAVED_FIRSTINTRO_PLR2,
     mEv_SAVED_FIRSTINTRO_PLR3,
+    mEv_SAVED_FIRSTINTRO_PLR4,
+    mEv_SAVED_FIRSTINTRO_PLR5,
+    mEv_SAVED_FIRSTINTRO_PLR6,
+    mEv_SAVED_FIRSTINTRO_PLR7,
 
     /* wait for next day to talk about HRA */
     mEv_SAVED_HRAWAIT_PLR0,
     mEv_SAVED_HRAWAIT_PLR1,
     mEv_SAVED_HRAWAIT_PLR2,
     mEv_SAVED_HRAWAIT_PLR3,
+    mEv_SAVED_HRAWAIT_PLR4,
+    mEv_SAVED_HRAWAIT_PLR5,
+    mEv_SAVED_HRAWAIT_PLR6,
+    mEv_SAVED_HRAWAIT_PLR7,
 
     /* Nook will talk about HRA when entering the shop */
     mEv_SAVED_HRATALK_PLR0,
     mEv_SAVED_HRATALK_PLR1,
     mEv_SAVED_HRATALK_PLR2,
     mEv_SAVED_HRATALK_PLR3,
+    mEv_SAVED_HRATALK_PLR4,
+    mEv_SAVED_HRATALK_PLR5,
+    mEv_SAVED_HRATALK_PLR6,
+    mEv_SAVED_HRATALK_PLR7,
 
     /* Do a 'favor' for a villager during chores */
     mEv_SAVED_FJOPENQUEST_PLR0,
     mEv_SAVED_FJOPENQUEST_PLR1,
     mEv_SAVED_FJOPENQUEST_PLR2,
     mEv_SAVED_FJOPENQUEST_PLR3,
+    mEv_SAVED_FJOPENQUEST_PLR4,
+    mEv_SAVED_FJOPENQUEST_PLR5,
+    mEv_SAVED_FJOPENQUEST_PLR6,
+    mEv_SAVED_FJOPENQUEST_PLR7,
 
     /* Player going to another town, set at train station */
     mEv_SAVED_GATEWAY_PLR0,
     mEv_SAVED_GATEWAY_PLR1,
     mEv_SAVED_GATEWAY_PLR2,
     mEv_SAVED_GATEWAY_PLR3,
+    mEv_SAVED_GATEWAY_PLR4,
+    mEv_SAVED_GATEWAY_PLR5,
+    mEv_SAVED_GATEWAY_PLR6,
+    mEv_SAVED_GATEWAY_PLR7,
     mEv_SAVED_GATEWAY_FRGN, /* Foreigner */
 
     /* Rumors */
@@ -528,7 +555,7 @@ typedef struct special_event_s {
 typedef struct save_event_data_s {
     mEv_special_c special;
     mEv_weekly_u weekly;
-    u32 flags;
+    u64 flags; /* one bit per saved event; 51 in use with eight residents */
 } mEv_event_save_c;
 
 typedef struct broker_event_common_s {

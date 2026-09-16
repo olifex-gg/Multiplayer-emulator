@@ -1,4 +1,5 @@
 #include "m_map_ovl.h"
+#include "m_house.h"
 
 #include "audio.h"
 #include "m_random_field.h"
@@ -693,6 +694,20 @@ static mActor_name_t mMP_GetFgBlockName(mMP_Ovl_c* map_ovl, int block_x, int blo
     return map_ovl->combination_table[Save_Get(combi_table[block_z][block_x]).combination_type].fg_id;
 }
 
+/* The fg acre (label_info column, row) of house acre `acre` (0 or 1): the
+ * first is always block (3,2) = label [1][2]; the second is wherever the
+ * town put it (mHS_house_acre_block, m_house.c), or absent. */
+static int mMP_house_acre_label(int acre, int* bx_out, int* bz_out) {
+    int bx, bz;
+
+    if (!mHS_house_acre_block(acre, &bx, &bz)) {
+        return FALSE;
+    }
+    *bx_out = bx - 1; /* label_info is indexed by fg acre */
+    *bz_out = bz - 1;
+    return TRUE;
+}
+
 static void mMP_set_house_data(mMP_Ovl_c* map_ovl, mSM_MenuInfo_c* menu) {
     static u8 akiya_str[PLAYER_NAME_LEN] = "free    ";
 
@@ -709,35 +724,37 @@ static void mMP_set_house_data(mMP_Ovl_c* map_ovl, mSM_MenuInfo_c* menu) {
     int residents;
     mActor_name_t fgblock_name;
 
-    priv = Save_Get(private_data);
     animal = Save_Get(animals);
     resident_p = &map_ovl->player_info[0];
-    block_label = &map_ovl->label_info[1][2];
 
-    /* Process player resident info first */
-    block_label->label_cnt = PLAYER_NUM;
-    block_label->label_no = mMP_LABEL_PLAYER;
+    /* Process player resident info first: one label per house acre, naming
+     * the owners of its four houses (multiplayer fork: eight residents in
+     * two house acres; mMP_house_acre_label finds each acre). */
+    for (j = 0; j < mHS_HOUSE_NUM / mHS_HOUSES_PER_ACRE; j++) {
+        int bx, bz;
+        if (!mMP_house_acre_label(j, &bx, &bz)) {
+            continue;
+        }
+        block_label = &map_ovl->label_info[bz][bx];
+        block_label->label_cnt = mHS_HOUSES_PER_ACRE;
+        block_label->label_no = mMP_LABEL_PLAYER;
 
-    residents = 0;
-    for (i = 0; i < PLAYER_NUM; i++, priv++) {
-        if (mPr_CheckPrivate(priv) == TRUE && (Common_Get(now_private) != priv || mEv_CheckFirstIntro() == FALSE)) {
-            mPr_CopyPlayerName(resident_p->name, priv->player_ID.player_name);
-            resident_p->sex = priv->gender;
+        for (residents = 0; residents < mHS_HOUSES_PER_ACRE; residents++, resident_p++) {
+            int pl_no = mHS_get_pl_no(j * mHS_HOUSES_PER_ACRE + residents);
+
+            priv = pl_no < PLAYER_NUM ? Save_GetPointer(private_data[pl_no]) : NULL;
+            if (priv != NULL && mPr_CheckPrivate(priv) == TRUE &&
+                (Common_Get(now_private) != priv || mEv_CheckFirstIntro() == FALSE)) {
+                mPr_CopyPlayerName(resident_p->name, priv->player_ID.player_name);
+                resident_p->sex = priv->gender;
+            } else {
+                mPr_CopyPlayerName(resident_p->name, akiya_str);
+                resident_p->sex = -1;
+            }
             resident_p->house_layer = 0;
             resident_p->house_idx = 0;
-
             block_label->residents[residents] = resident_p;
-            residents++;
-            resident_p++;
         }
-    }
-
-    for (residents; residents < PLAYER_NUM; residents++, resident_p++) {
-        mPr_CopyPlayerName(resident_p->name, akiya_str);
-        resident_p->sex = -1;
-        resident_p->house_layer = 0;
-
-        block_label->residents[residents] = resident_p;
     }
 
     house_pos_top = mMP_house_pos_list;

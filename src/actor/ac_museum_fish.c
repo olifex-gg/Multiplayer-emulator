@@ -625,20 +625,20 @@ int Museum_Fish_GetMsgNo(MUSEUM_FISH_ACTOR* actor) {
     mIN_copy_name_str(item_name, fishName);
     mMsg_Set_item_str_art(mMsg_Get_base_window_p(), 0, item_name, 0x10, mIN_get_item_article(fishName));
 
-    if (fishInfo >= 1 && fishInfo <= 4) {
+    if (mMmd_DONATOR_EXISTS(fishInfo)) {
         mMsg_Set_free_str(mMsg_Get_base_window_p(), 0,
                           common_data.save.save.private_data[fishInfo - 1].player_ID.player_name, 8);
     }
 
     if (actor->fishDisplayMsgIter < actor->numFishDisplayed - 1) {
-        if (fishInfo >= 1 && fishInfo <= 4) {
+        if (mMmd_DONATOR_EXISTS(fishInfo)) {
             return MSG_12194;
         } else {
             return MSG_12195;
         }
     }
 
-    if (fishInfo >= 1 && fishInfo <= 4) {
+    if (mMmd_DONATOR_EXISTS(fishInfo)) {
         return MSG_12191;
     } else {
         return MSG_12192;

@@ -58,7 +58,7 @@ static u8 aPT_receive_buf[256];
 #define aPT_MAIL_CARD_NO_OFS (aPT_MAIL_HEADER_BACK_START_OFS + sizeof(u8))
 
 static int aPT_CheckMailBoxVac(void) {
-    int idx = mHS_get_arrange_idx(Common_Get(player_no) & 3);
+    int idx = mHS_get_arrange_idx(Common_Get(player_no));
     mHm_hs_c* home = Save_GetPointer(homes[idx]);
 
     return mMl_chk_mail_free_space(home->mailbox, HOME_MAILBOX_SIZE);
@@ -153,7 +153,7 @@ static int aPT_SendMail(GAME* game) {
 
             idx = aPT_CheckMailBoxVac();
             if (idx != -1) {
-                mMl_copy_mail(&Save_GetPointer(homes[mHS_get_arrange_idx(Common_Get(player_no) & 3)])->mailbox[idx],
+                mMl_copy_mail(&Save_GetPointer(homes[mHS_get_arrange_idx(Common_Get(player_no))])->mailbox[idx],
                               &mail);
                 ret = TRUE;
             }

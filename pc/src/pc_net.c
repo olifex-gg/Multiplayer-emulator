@@ -408,8 +408,10 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         if (payload_len != sizeof(d)) return -1;
         memcpy(&d, payload, sizeof(d));
         s_town_version = d.town_version;
-        s_town_present = d.present && blob_len == ACNET_TOWN_SIZE;
-        if (d.present && blob_len == ACNET_TOWN_SIZE) {
+        /* A town stored by the four-resident builds is accepted too; the
+         * loader converts it, and the next save uploads the new layout. */
+        s_town_present = d.present && (blob_len == ACNET_TOWN_SIZE || blob_len == ACNET_LEGACY_TOWN_SIZE);
+        if (s_town_present) {
             if (write_town_file(blob, blob_len) == 0) {
                 OSReport("[net] downloaded town v%u into %s\n", d.town_version, NET_GCI_PATH);
             } else {

@@ -22,6 +22,7 @@
  */
 #ifdef TARGET_PC
 
+#include "m_card.h"
 #include "ac_puppet.h"
 #include "pc_net.h"
 #include "pc_save_bswap.h"
@@ -50,6 +51,23 @@ typedef char puppet_runtime_end_check[(ACNET_LAND_RUNTIME_END == RSV_SHOP_PAPER)
 typedef char puppet_grow_time_check[(sizeof(lbRTC_time_c) <= ACNET_GROW_TIME_SIZE) ? 1 : -1];
 /* The server tells an empty save block by its PersonalID; keep the offset honest. */
 typedef char puppet_id_offset_check[(offsetof(Private_c, player_ID.player_id) == ACNET_PRIVATE_ID_OFFSET) ? 1 : -1];
+/* Every save-layout constant the server relies on, against the real structs
+ * (multiplayer fork, eight residents: all of them moved). */
+typedef char puppet_players_check[(ACNET_MAX_PLAYERS == PLAYER_NUM) ? 1 : -1];
+typedef char puppet_save_t_check[(ACNET_SAVE_T_SIZE == sizeof(Save_t)) ? 1 : -1];
+typedef char puppet_save_aligned_check[(ACNET_SAVE_ALIGNED_SIZE == sizeof(Save)) ? 1 : -1];
+typedef char puppet_save_main_check[(ACNET_SAVE_MAIN_OFFSET == OTHERS_SIZE) ? 1 : -1];
+typedef char puppet_save_back_check[(ACNET_SAVE_BACK_OFFSET == OTHERS_SIZE + sizeof(Save)) ? 1 : -1];
+typedef char puppet_payload_check[(ACNET_GCI_PAYLOAD_SIZE == mCD_LAND_SAVE_SIZE) ? 1 : -1];
+typedef char puppet_payload_fit_check[(mCD_LAND_SAVE_SIZE == OTHERS_SIZE + 2 * sizeof(Save)) ? 1 : -1];
+typedef char puppet_checksum_check[(ACNET_SAVE_CHECKSUM_OFFSET == offsetof(Save_t, save_check.checksum)) ? 1 : -1];
+typedef char puppet_private_check[(ACNET_PRIVATE_ARRAY_OFFSET == offsetof(Save_t, private_data)) ? 1 : -1];
+typedef char puppet_private_size_check[(ACNET_PRIVATE_SIZE == sizeof(Private_c)) ? 1 : -1];
+typedef char puppet_land_info_check[(ACNET_LAND_INFO_OFFSET == offsetof(Save_t, land_info)) ? 1 : -1];
+typedef char puppet_home_check[(ACNET_HOME_ARRAY_OFFSET == offsetof(Save_t, homes)) ? 1 : -1];
+typedef char puppet_home_size_check[(ACNET_HOME_SIZE == sizeof(mHm_hs_c)) ? 1 : -1];
+typedef char puppet_fg_check[(ACNET_FG_OFFSET == offsetof(Save_t, fg)) ? 1 : -1];
+typedef char puppet_arrangement_check[(ACNET_HOUSE_ARRANGEMENT_OFFSET == offsetof(Save_t, house_arrangement)) ? 1 : -1];
 
 /* True once the resident is actually in the town. The title demo and the
  * player-select screens run a player actor too (the title even sets
@@ -1104,7 +1122,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
      *     only the contents change, and it happens here between the game's
      *     own reads rather than from the network pump. Their puppet's look
      *     is rebuilt from the new block on its next update. */
-    for (slot = 0; slot < 4; slot++) {
+    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
         if (slot == local_slot) {
             continue;
         }
@@ -1182,7 +1200,7 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     }
 
     /* 3. Spawn a puppet for any present resident that does not have one. */
-    for (slot = 0; slot < 4; slot++) {
+    for (slot = 0; slot < ACNET_MAX_PLAYERS; slot++) {
         acnet_player_state_t st;
         if (slot == local_slot) {
             continue;

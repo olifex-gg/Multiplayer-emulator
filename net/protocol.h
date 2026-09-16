@@ -18,11 +18,11 @@
 
 #include <stdint.h>
 
-#define ACNET_PROTOCOL_VERSION 6 /* 6: chat lines up to 200 characters */
+#define ACNET_PROTOCOL_VERSION 7 /* 7: eight residents; the town blob grew */
 #define ACNET_DEFAULT_PORT     7777
 
-#define ACNET_MAX_PLAYERS 4     /* PLAYER_NUM: resident slots in one town */
-#define ACNET_MAX_CLIENTS 8     /* connections, including ones still logging in */
+#define ACNET_MAX_PLAYERS 8     /* PLAYER_NUM: resident slots in one town */
+#define ACNET_MAX_CLIENTS 16    /* connections, including ones still logging in */
 #define ACNET_NAME_LEN    16    /* resident login name, NUL padded */
 #define ACNET_INVITE_LEN  32    /* invite code, NUL padded */
 #define ACNET_CHAT_LEN    200   /* a chat line; the speech window pages anything over four lines */
@@ -34,27 +34,44 @@
 #define ACNET_CH_CHAT    2
 #define ACNET_CHANNELS   3
 
-/* --- Town blob layout (from the port's pc_m_card.c and the decomp headers) --- */
+/* --- Town blob layout (from the port's pc_m_card.c and the decomp headers) ---
+ * Eight residents (PLAYER_NUM 8). The game checks every one of these against
+ * the real structs at compile time (m_puppet.c_inc). */
 #define ACNET_GCI_HEADER_SIZE      64            /* sizeof(CARDDir) */
-#define ACNET_GCI_PAYLOAD_SIZE     0x72000       /* mCD_LAND_SAVE_SIZE */
+#define ACNET_GCI_PAYLOAD_SIZE     0xA2000       /* mCD_LAND_SAVE_SIZE */
 #define ACNET_TOWN_SIZE            (ACNET_GCI_HEADER_SIZE + ACNET_GCI_PAYLOAD_SIZE)
-#define ACNET_SAVE_MAIN_OFFSET     0x26000       /* Save_t main copy, payload relative */
-#define ACNET_SAVE_BACK_OFFSET     0x4C000       /* Save_t backup copy, payload relative */
-#define ACNET_SAVE_ALIGNED_SIZE    0x26000       /* sizeof(Save): sector aligned union */
-#define ACNET_SAVE_T_SIZE          0x242A0       /* sizeof(Save_t): checksummed bytes */
+#define ACNET_SAVE_MAIN_OFFSET     0x32000       /* Save_t main copy, payload relative (== OTHERS_SIZE) */
+#define ACNET_SAVE_BACK_OFFSET     0x6A000       /* Save_t backup copy, payload relative */
+#define ACNET_SAVE_ALIGNED_SIZE    0x38000       /* sizeof(Save): sector aligned union */
+#define ACNET_SAVE_T_SIZE          0x37620       /* sizeof(Save_t): checksummed bytes */
 #define ACNET_SAVE_CHECKSUM_OFFSET 0x12          /* mFRm_chk_t.checksum inside Save_t */
 #define ACNET_PRIVATE_ARRAY_OFFSET 0x20          /* Save_t.private_data[PLAYER_NUM] */
 #define ACNET_PRIVATE_SIZE         0x2440        /* sizeof(Private_c) */
 #define ACNET_PRIVATE_ID_OFFSET    0x10          /* PersonalID_c.player_id, land_id (u16 BE each) inside
                                                   * Private_c; both 0xFFFF = no character in this block */
-#define ACNET_HOME_ARRAY_OFFSET    0x9CE8        /* Save_t.homes[PLAYER_NUM] */
+#define ACNET_LAND_INFO_OFFSET     0x12220       /* Save_t.land_info: name[8], exists, u16 id at +0xA */
+#define ACNET_HOME_ARRAY_OFFSET    0x12DE8       /* Save_t.homes[PLAYER_NUM] */
 #define ACNET_HOME_SIZE            0x26B0        /* sizeof(mHm_hs_c) */
+#define ACNET_HOUSE_ARRANGEMENT_OFFSET 0x3392E   /* Save_t.house_arrangement[PLAYER_NUM]: house index per player */
+
+/* The four-resident layout (protocol versions up to 6). A server still
+ * holding such a town serves it as it is; the game converts it on load and
+ * uploads the new layout on its next save. */
+#define ACNET_LEGACY_MAX_PLAYERS          4
+#define ACNET_LEGACY_GCI_PAYLOAD_SIZE     0x72000
+#define ACNET_LEGACY_TOWN_SIZE            (ACNET_GCI_HEADER_SIZE + ACNET_LEGACY_GCI_PAYLOAD_SIZE)
+#define ACNET_LEGACY_SAVE_MAIN_OFFSET     0x26000
+#define ACNET_LEGACY_SAVE_ALIGNED_SIZE    0x26000
+#define ACNET_LEGACY_SAVE_T_SIZE          0x242A0
+#define ACNET_LEGACY_PRIVATE_ARRAY_OFFSET 0x20
+#define ACNET_LEGACY_HOME_ARRAY_OFFSET    0x9CE8
+#define ACNET_LEGACY_FG_OFFSET            0x137A8
 
 /* Field-item table inside Save_t (Save_t.fg): the town's 6 x 5 acres, each
  * 16 x 16 cells of u16 item ids -- trees, flowers, weeds, dropped items,
  * holes, buried things. The loaded field's item data aliases this table
  * directly, so it is both the persistent and the live state. */
-#define ACNET_FG_OFFSET     0x137A8   /* Save_t.fg, relative to Save_t */
+#define ACNET_FG_OFFSET     0x26368   /* Save_t.fg, relative to Save_t */
 #define ACNET_FG_BLOCK_X    5
 #define ACNET_FG_BLOCK_Z    6
 #define ACNET_FG_UT         16
@@ -139,7 +156,7 @@ typedef struct ACNET_PACKED {
     char     invite[ACNET_INVITE_LEN];
     char     name[ACNET_NAME_LEN];
     uint32_t client_build;
-    uint8_t  want_slot;   /* ACNET_SLOT_ANY or 0..3 */
+    uint8_t  want_slot;   /* ACNET_SLOT_ANY or 0..7 */
     uint8_t  reserved[3];
 } acnet_hello_t;
 
@@ -202,7 +219,7 @@ typedef struct ACNET_PACKED {
  * who has never saved, or refuses if that block belongs to a resident who
  * has. Everyone else is told with PEER_LEFT (old slot) + PEER_JOINED (new). */
 typedef struct ACNET_PACKED {
-    uint8_t player_no;    /* 0..3: the Save_t.private_data index in use */
+    uint8_t player_no;    /* 0..7: the Save_t.private_data index in use */
     uint8_t reserved[3];
 } acnet_claim_slot_t;
 

@@ -227,8 +227,8 @@ static int mSDI_StartInitNew(GAME* game, int player_no, int malloc_flag) {
     for (i = 0; i < PLAYER_NUM; i++) {
         mPr_ClearPrivateInfo(priv);
 
-        Save_Get(homes[i]).outlook_pal = i;
-        Save_Get(homes[i]).next_outlook_pal = i;
+        Save_Get(homes[i]).outlook_pal = i % mHS_HOUSES_PER_ACRE; /* four roof colours, two house acres */
+        Save_Get(homes[i]).next_outlook_pal = i % mHS_HOUSES_PER_ACRE;
         bzero(&Save_Get(homes[i]).size_info, sizeof(mHm_rmsz_c));
 
         mPr_ClearMotherMailInfo(&Save_Get(mother_mail[i]));
@@ -336,8 +336,8 @@ static int mSDI_StartInitNew(GAME* game, int player_no, int malloc_flag) {
     for (i = 0; i < PLAYER_NUM; i++) {
         mPr_ClearPrivateInfo(priv_p);
 
-        Save_Get(homes[i]).outlook_pal = i;
-        Save_Get(homes[i]).next_outlook_pal = i;
+        Save_Get(homes[i]).outlook_pal = i % mHS_HOUSES_PER_ACRE; /* four roof colours, two house acres */
+        Save_Get(homes[i]).next_outlook_pal = i % mHS_HOUSES_PER_ACRE;
         bzero(&Save_Get(homes[i]).size_info, sizeof(mHm_rmsz_c));
 
         mPr_ClearMotherMailInfo(&Save_Get(mother_mail[i]));

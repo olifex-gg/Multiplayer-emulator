@@ -1,6 +1,6 @@
 > **Multiplayer fork.** This repository is a fork of
 > [flyngmt/ACGC-PC-Port](https://github.com/flyngmt/ACGC-PC-Port) that adds a shared,
-> server-hosted town for up to four residents. The design, decisions, and status live in
+> server-hosted town for up to eight residents. The design, decisions, and status live in
 > [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md). The server lives in [`server/`](server/).
 > Everything below is the upstream port's README and still applies to building the game.
 
@@ -26,7 +26,9 @@ The game reads all assets directly from the disc image at startup. No extraction
 
 ## Playing online (this fork)
 
-Up to four people play as the four residents of one shared town at the same time.
+Up to eight people play as the eight residents of one shared town at the same time.
+(Towns saved by earlier builds had four; they are upgraded the first time the new build
+loads them, and the old file is kept beside the new one as `.before-eight`.)
 Everyone needs the same `AnimalCrossing.exe`, `AnimalCrossingOnline.exe`, `shaders/` and
 their own disc image in `rom/`.
 

@@ -1,3 +1,4 @@
+#include "m_house.h"
 #include "m_trademark.h"
 
 #include "m_scene_table.h"
@@ -320,8 +321,8 @@ extern void trademark_cleanup(GAME* game) {
     int i;
 
     for (i = 0; i < PLAYER_NUM; i++) {
-        home->outlook_pal = i;
-        home->next_outlook_pal = i;
+        home->outlook_pal = i % mHS_HOUSES_PER_ACRE;
+        home->next_outlook_pal = i % mHS_HOUSES_PER_ACRE;
 
         mMl_clear_mail_box(home->mailbox, HOME_MAILBOX_SIZE);
         home++;

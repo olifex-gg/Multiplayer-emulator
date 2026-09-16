@@ -865,7 +865,12 @@ extern int mNT_check_unknown(mActor_name_t item_no);
 #define SIGNBOARD5_PLR3 (SIGNBOARD_START + 29)
 #define SIGNBOARD6_PLR3 (SIGNBOARD_START + 30)
 #define SIGNBOARD7_PLR3 (SIGNBOARD_START + 31)
-#define SIGNBOARD (SIGNBOARD_START + 32)
+/* Multiplayer fork: eight residents, so a sign id is START + player * 8 +
+ * design (64 of them) and the blank sign moved from +32 to +64. */
+#define SIGNBOARD_PLAYER_SHIFT 3
+#define SIGNBOARD_PLAYER_MASK 7
+#define SIGNBOARD_BLANK_BIT 6
+#define SIGNBOARD (SIGNBOARD_START + 64)
 #define SIGNBOARD_END (SIGNBOARD)
 
 #define FTR0_START 0x1000

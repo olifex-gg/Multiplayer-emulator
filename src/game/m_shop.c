@@ -1094,7 +1094,7 @@ extern void mSP_ShopItsumoChirashi(int house_no, int shop_level, mActor_name_t i
     if (Save_Get(homes[house_no]).ownerID.land_id != 0xFFFF) {
         int free_mail_idx = mMl_chk_mail_free_space(Save_Get(homes[house_no]).mailbox, HOME_MAILBOX_SIZE);
 
-        if (mEv_ArbeitPlayer(mHS_get_pl_no(house_no) & 3) != TRUE) {
+        if (mEv_ArbeitPlayer(mHS_get_pl_no(house_no)) != TRUE) {
             u8 item_name_str[mIN_ITEM_NAME_LEN];
             Mail_c leaflet;
             int header_back_start;
@@ -1119,7 +1119,7 @@ extern void mSP_ShopItsumoChirashi(int house_no, int shop_level, mActor_name_t i
                 default: {
                     if (free_mail_idx >= 0) {
                         mPr_CopyPersonalID(&leaflet.header.recipient.personalID,
-                                           &Save_Get(private_data[mHS_get_pl_no(house_no) & 3]).player_ID);
+                                           &Save_Get(private_data[mHS_get_pl_no(house_no)]).player_ID);
                         leaflet.header.recipient.type = mMl_NAME_TYPE_PLAYER;
 
                         mMl_copy_mail(Save_Get(homes[house_no]).mailbox + free_mail_idx, &leaflet);
@@ -1227,7 +1227,7 @@ extern void mSP_SetRenewalChiraswhi_AppoDay() {
         int i;
 
         for (i = 0; i < mHS_HOUSE_NUM; i++) {
-            int player_no = mHS_get_pl_no(i) & 3;
+            int player_no = mHS_get_pl_no(i);
             int free_mail_idx = mMl_chk_mail_free_space(Save_Get(homes[i]).mailbox, HOME_MAILBOX_SIZE);
 
             if (free_mail_idx >= 0 && Save_Get(homes[i]).ownerID.land_id != 0xFFFF &&
@@ -1242,7 +1242,7 @@ extern void mSP_SetRenewalChiraswhi_AppoDay() {
                 leaflet.content.paper_type = ITM_PAPER55; // simple paper
 
                 mPr_CopyPersonalID(&leaflet.header.recipient.personalID,
-                                   &Save_Get(private_data[mHS_get_pl_no(i) & 3]).player_ID);
+                                   &Save_Get(private_data[mHS_get_pl_no(i)]).player_ID);
                 leaflet.header.recipient.type = mMl_NAME_TYPE_PLAYER;
 
                 mMl_copy_mail(Save_Get(homes[i]).mailbox + free_mail_idx, &leaflet);

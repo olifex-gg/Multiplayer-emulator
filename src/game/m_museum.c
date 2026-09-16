@@ -218,7 +218,7 @@ static void mMsm_SendResultMail() {
     Private_c* priv_p = Save_Get(private_data);
     Private_c* priv = priv_p;
     mActor_name_t present;
-    u8 send_flags = 0b1111;
+    u8 send_flags = (u8)((1 << PLAYER_NUM) - 1);
     mActor_name_t fossil = EMPTY_NO;
     mMsm_remail_info_c* remail_info;
     int idx;

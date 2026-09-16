@@ -123,16 +123,63 @@ uint16_t town_checksum_be(const uint8_t* data, size_t size) {
     return (uint16_t)((~(sum & 0xFFFFu) + 1u) & 0xFFFFu);
 }
 
-void town_fix_payload(uint8_t* payload) {
-    uint8_t* main_save = payload + ACNET_SAVE_MAIN_OFFSET;
+static void fix_payload_layout(uint8_t* payload, size_t main_off, size_t save_t_size, size_t aligned_size) {
+    uint8_t* main_save = payload + main_off;
     uint8_t* chk = main_save + ACNET_SAVE_CHECKSUM_OFFSET;
     uint16_t sum;
     chk[0] = 0;
     chk[1] = 0;
-    sum = town_checksum_be(main_save, ACNET_SAVE_T_SIZE);
+    sum = town_checksum_be(main_save, save_t_size);
     chk[0] = (uint8_t)(sum >> 8);
     chk[1] = (uint8_t)(sum & 0xFF);
-    memcpy(payload + ACNET_SAVE_BACK_OFFSET, main_save, ACNET_SAVE_ALIGNED_SIZE);
+    memcpy(main_save + aligned_size, main_save, aligned_size);
+}
+
+void town_fix_payload(uint8_t* payload) {
+    fix_payload_layout(payload, ACNET_SAVE_MAIN_OFFSET, ACNET_SAVE_T_SIZE, ACNET_SAVE_ALIGNED_SIZE);
+}
+
+/* --- Two layouts: eight residents, and the four-resident files older
+ * builds wrote (served as they are until a game saves them anew). --- */
+int town_is_legacy(const town_t* t) {
+    return t->data != NULL && t->data_len == ACNET_LEGACY_TOWN_SIZE;
+}
+
+/* Slots that have blocks in the stored town at all. */
+static int town_slot_stored(const town_t* t, int slot) {
+    return slot >= 0 && slot < (town_is_legacy(t) ? ACNET_LEGACY_MAX_PLAYERS : ACNET_MAX_PLAYERS);
+}
+
+static size_t town_private_off(const town_t* t, int slot) {
+    if (town_is_legacy(t)) {
+        return ACNET_GCI_HEADER_SIZE + ACNET_LEGACY_SAVE_MAIN_OFFSET + ACNET_LEGACY_PRIVATE_ARRAY_OFFSET +
+               (size_t)slot * ACNET_PRIVATE_SIZE;
+    }
+    return ACNET_PRIVATE_OFFSET(slot);
+}
+
+static size_t town_home_off(const town_t* t, int slot) {
+    if (town_is_legacy(t)) {
+        return ACNET_GCI_HEADER_SIZE + ACNET_LEGACY_SAVE_MAIN_OFFSET + ACNET_LEGACY_HOME_ARRAY_OFFSET +
+               (size_t)slot * ACNET_HOME_SIZE;
+    }
+    return ACNET_HOME_OFFSET(slot);
+}
+
+static size_t town_fg_abs(const town_t* t) {
+    if (town_is_legacy(t)) {
+        return ACNET_GCI_HEADER_SIZE + ACNET_LEGACY_SAVE_MAIN_OFFSET + ACNET_LEGACY_FG_OFFSET;
+    }
+    return ACNET_FG_ABS;
+}
+
+static void town_fix_stored(town_t* t) {
+    if (town_is_legacy(t)) {
+        fix_payload_layout(t->data + ACNET_GCI_HEADER_SIZE, ACNET_LEGACY_SAVE_MAIN_OFFSET, ACNET_LEGACY_SAVE_T_SIZE,
+                           ACNET_LEGACY_SAVE_ALIGNED_SIZE);
+    } else {
+        town_fix_payload(t->data + ACNET_GCI_HEADER_SIZE);
+    }
 }
 
 static int load_residents(town_t* t) {
@@ -184,17 +231,23 @@ int town_open(town_t* t, const char* data_root, const char* invite) {
 
     path_join(path, sizeof(path), t->dir, TOWN_FILE);
     if (stat(path, &st) == 0) {
-        if (st.st_size != (off_t)ACNET_TOWN_SIZE) {
-            fprintf(stderr, "[town %s] %s has size %ld, expected %u; ignoring\n", invite, path,
-                    (long)st.st_size, (unsigned)ACNET_TOWN_SIZE);
+        size_t len = (size_t)st.st_size;
+        if (len != ACNET_TOWN_SIZE && len != ACNET_LEGACY_TOWN_SIZE) {
+            fprintf(stderr, "[town %s] %s has size %ld, expected %u (or %u from the four-resident builds); ignoring\n",
+                    invite, path, (long)st.st_size, (unsigned)ACNET_TOWN_SIZE, (unsigned)ACNET_LEGACY_TOWN_SIZE);
         } else {
-            t->data = (uint8_t*)malloc(ACNET_TOWN_SIZE);
+            t->data = (uint8_t*)malloc(len);
             if (!t->data) return -1;
-            if (read_file(path, t->data, ACNET_TOWN_SIZE) != 0 ||
-                !town_validate_blob(t->data, ACNET_TOWN_SIZE)) {
+            if (read_file(path, t->data, len) != 0 || !town_validate_blob_any(t->data, len)) {
                 fprintf(stderr, "[town %s] failed to read %s\n", invite, path);
                 free(t->data);
                 t->data = NULL;
+            } else {
+                t->data_len = len;
+                if (len == ACNET_LEGACY_TOWN_SIZE) {
+                    fprintf(stderr, "[town %s] four-resident town file; served as it is until a game saves it in the eight-resident layout\n",
+                            invite);
+                }
             }
         }
     }
@@ -225,8 +278,8 @@ void town_close(town_t* t) {
 
 int town_block_has_character(const town_t* t, int i) {
     const uint8_t* id;
-    if (!t->data || i < 0 || i >= ACNET_MAX_PLAYERS) return 0;
-    id = t->data + ACNET_PRIVATE_OFFSET(i) + ACNET_PRIVATE_ID_OFFSET;
+    if (!t->data || !town_slot_stored(t, i)) return 0;
+    id = t->data + town_private_off(t, i) + ACNET_PRIVATE_ID_OFFSET;
     return !(id[0] == 0xFF && id[1] == 0xFF && id[2] == 0xFF && id[3] == 0xFF);
 }
 
@@ -287,7 +340,7 @@ int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t ite
     if (ACNET_LAND_ITEM_IS_RUNTIME(item)) return 0; /* a placeholder, never land; see protocol.h */
     if (fx < 0 || fx >= ACNET_FG_BLOCK_X || fz < 0 || fz >= ACNET_FG_BLOCK_Z) return 0;
     if (utx < 0 || utx >= ACNET_FG_UT || utz < 0 || utz >= ACNET_FG_UT) return 0;
-    cell = t->data + ACNET_FG_CELL_ABS(fx, fz, utx, utz);
+    cell = t->data + town_fg_abs(t) + (size_t)ACNET_FG_CELL_INDEX(fx, fz, utx, utz) * 2;
     cell[0] = (uint8_t)(item >> 8);
     cell[1] = (uint8_t)(item & 0xFF);
     return 1;
@@ -295,12 +348,19 @@ int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t ite
 
 int town_flush(town_t* t) {
     if (!t->data) return 0;
-    town_fix_payload(t->data + ACNET_GCI_HEADER_SIZE);
-    return write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, t->data, ACNET_TOWN_SIZE) == 0;
+    town_fix_stored(t);
+    return write_file_atomic(t->dir, TOWN_FILE, TOWN_TMP, t->data, t->data_len) == 0;
 }
 
 int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob) {
     if (slot < 0 || slot >= ACNET_MAX_PLAYERS || !t->data) return 0;
+    if (town_is_legacy(t)) {
+        /* No place to put them until a game saves the town in the new
+         * layout; the caller relays the blocks to the others regardless. */
+        fprintf(stderr, "[town %s] blocks for slot %d not stored: the town is still a four-resident file\n",
+                t->invite, slot);
+        return 0;
+    }
     memcpy(t->data + ACNET_PRIVATE_OFFSET(slot), blob, ACNET_PRIVATE_SIZE);
     memcpy(t->data + ACNET_HOME_OFFSET(slot), blob + ACNET_PRIVATE_SIZE, ACNET_HOME_SIZE);
     if (!t->slot_uploaded[slot]) {
@@ -313,6 +373,12 @@ int town_set_resident_blocks(town_t* t, int slot, const uint8_t* blob) {
 int town_validate_blob(const uint8_t* blob, size_t len) {
     if (len != ACNET_TOWN_SIZE) return 0;
     /* CARDDir.gameName: "GAF" + region letter (GAFE for USA) */
+    if (blob[0] != 'G' || blob[1] != 'A' || blob[2] != 'F') return 0;
+    return 1;
+}
+
+int town_validate_blob_any(const uint8_t* blob, size_t len) {
+    if (len != ACNET_TOWN_SIZE && len != ACNET_LEGACY_TOWN_SIZE) return 0;
     if (blob[0] != 'G' || blob[1] != 'A' || blob[2] != 'F') return 0;
     return 1;
 }
@@ -335,8 +401,9 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob) {
         for (j = 0; j < ACNET_MAX_PLAYERS; j++) {
             if (j == uploader_slot) continue;
             if (t->slot_owner[j][0] == '\0' || !t->slot_uploaded[j]) continue;
-            memcpy(next + ACNET_PRIVATE_OFFSET(j), t->data + ACNET_PRIVATE_OFFSET(j), ACNET_PRIVATE_SIZE);
-            memcpy(next + ACNET_HOME_OFFSET(j), t->data + ACNET_HOME_OFFSET(j), ACNET_HOME_SIZE);
+            if (!town_slot_stored(t, j)) continue; /* a four-resident file has no such block */
+            memcpy(next + ACNET_PRIVATE_OFFSET(j), t->data + town_private_off(t, j), ACNET_PRIVATE_SIZE);
+            memcpy(next + ACNET_HOME_OFFSET(j), t->data + town_home_off(t, j), ACNET_HOME_SIZE);
         }
     }
     town_fix_payload(next + ACNET_GCI_HEADER_SIZE);
@@ -346,8 +413,12 @@ uint32_t town_apply_upload(town_t* t, int uploader_slot, const uint8_t* blob) {
         free(next);
         return 0;
     }
+    if (town_is_legacy(t)) {
+        fprintf(stderr, "[town %s] now stored in the eight-resident layout\n", t->invite);
+    }
     free(t->data);
     t->data = next;
+    t->data_len = ACNET_TOWN_SIZE;
     t->version++;
     t->slot_uploaded[uploader_slot] = 1;
     save_residents(t);

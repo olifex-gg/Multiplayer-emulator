@@ -120,7 +120,7 @@ static u8 __unused_implicit[0x40] ATTRIBUTE_ALIGN(32);
 static u8 commentImageBuffer[CARD_COMMENT_SIZE + 0x5800] ATTRIBUTE_ALIGN(32);
 u8 save_game_image = false;
 FamicomCommon famicomCommon;
-u8 famicomCommonSave[0x1980 + sizeof(FamicomSaveDataHeader)];
+u8 famicomCommonSave[0x660 * PLAYER_NUM + sizeof(FamicomSaveDataHeader)];
 u8** nesrom_filename_ptrs = nullptr;
 static char* nesrom_filename_strbuf = nullptr;
 u8 InputValid[4];

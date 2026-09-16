@@ -360,7 +360,7 @@ static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
         if (h.want_slot != ACNET_SLOT_ANY) {
             send_reject(c->peer, ACNET_REJECT_SLOT_TAKEN, "that resident slot belongs to someone else");
         } else {
-            send_reject(c->peer, ACNET_REJECT_TOWN_FULL, "this town already has four residents");
+            send_reject(c->peer, ACNET_REJECT_TOWN_FULL, "this town already has eight residents");
         }
         return;
     }
@@ -409,7 +409,7 @@ static void handle_town_request(client_t* c) {
     d.town_version = t->version;
     d.present = t->data ? 1 : 0;
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_TOWN_DATA, &d, sizeof(d), t->data,
-             t->data ? ACNET_TOWN_SIZE : 0, 1);
+             t->data ? t->data_len : 0, 1);
     if (g_verbose) logf_("[%s] sent town (present=%d, v%u) to %s", t->invite, d.present, t->version, c->name);
 }
 

@@ -10,7 +10,10 @@
 extern "C" {
 #endif
 
-#define PLAYER_NUM 4
+/* Multiplayer fork: eight residents in one town (the original had four).
+ * Eight is the ceiling: several save fields keep one bit per player in a
+ * byte. Everything per-resident is sized from this. */
+#define PLAYER_NUM 8
 #define FOREIGNER_NUM 1
 #define TOTAL_PLAYER_NUM (PLAYER_NUM + FOREIGNER_NUM)
 

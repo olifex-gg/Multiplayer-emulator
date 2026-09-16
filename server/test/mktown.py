@@ -65,8 +65,8 @@ def make(out, fill):
     blob = bytearray(C["TOWN_SIZE"])
     blob[0:6] = b"GAFE01"
     blob[8:8 + 19] = b"DobutsunomoriP_MURA"
-    # land_info sits right after the private array; give it a non-zero id
-    land = C["MAIN_ABS"] + C["ACNET_PRIVATE_ARRAY_OFFSET"] + C["ACNET_MAX_PLAYERS"] * C["ACNET_PRIVATE_SIZE"]
+    # land_info: give it a non-zero id
+    land = C["MAIN_ABS"] + C["ACNET_LAND_INFO_OFFSET"]
     blob[land:land + 8] = b"Testtown"
     for i in range(C["ACNET_MAX_PLAYERS"]):
         a, b = private_range(i)

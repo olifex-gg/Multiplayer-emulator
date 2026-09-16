@@ -291,7 +291,7 @@ static int mPO_delivery_mail_sub(int house_no) {
 
 static void mPO_delivery_one_address_mail(int house_no) {
     if (mPO_delivery_mail_sub(house_no) == TRUE) {
-        s16 mask = (1 << house_no) ^ 0b1111;
+        s16 mask = (1 << house_no) ^ ((1 << mHS_HOUSE_NUM) - 1);
         Save_Get(post_office.mail_recipient_flags) &= mask; // clear out delivered houses
     }
 }
@@ -528,6 +528,6 @@ extern void mPO_post_office_init() {
     mMl_clear_mail_box(Save_Get(post_office).mail, mPO_MAIL_STORAGE_SIZE);
     mMl_clear_mail(&Save_Get(post_office).leaflet);
     mMl_clear_mail(&Save_Get(post_office).event_leaflet);
-    Save_Get(post_office).leaflet_recipient_flags.raw = 0x000F000F;
+    Save_Get(post_office).leaflet_recipient_flags.raw = (((1 << mHS_HOUSE_NUM) - 1) << 16) | ((1 << mHS_HOUSE_NUM) - 1);
     lbRTC_TimeCopy(&Save_Get(post_office).delivery_time, Common_GetPointer(time.rtc_time));
 }

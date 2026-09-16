@@ -257,7 +257,7 @@ static int aNM2_GetBeforePrivateIdx(Private_c* now_priv) {
     PersonalID_c* pid;
     int player_idx;
     if (mPr_NullCheckPersonalID(&now_priv->player_ID) == FALSE) {
-        for (player_idx = 0, pid = Common_Get(travel_persistent_data).pid; player_idx < 4; pid++, player_idx++) {
+        for (player_idx = 0, pid = Common_Get(travel_persistent_data).pid; player_idx < PLAYER_NUM; pid++, player_idx++) {
             if (mPr_CheckCmpPersonalID(&now_priv->player_ID, pid) == TRUE) {
                 res = player_idx;
                 break;
