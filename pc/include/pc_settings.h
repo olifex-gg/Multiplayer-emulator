@@ -21,6 +21,7 @@ typedef struct {
     int master_volume;    /* Applied at the PC audio output, 0-100 (default 100) */
     int stick_deadzone;   /* Gamepad main stick deadzone, percent 0-40 (default 12) */
     int cstick_deadzone;  /* Gamepad C-stick deadzone, percent 0-40 (default 12) */
+    int chat_window_scale; /* Multiplayer chat speech window, percent of a villager's 50-100 (default 75) */
 } PCSettings;
 
 extern PCSettings g_pc_settings;

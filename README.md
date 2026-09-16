@@ -40,7 +40,9 @@ their own disc image in `rom/`.
    typed out letter by letter, in your game and in everyone else's. The window is only as
    tall as the message (up to four lines; a longer one carries on in a second window after
    two seconds, up to 200 characters) and closes by itself; nobody is frozen while it is up,
-   and a villager who talks to you always gets the window first.
+   and a villager who talks to you always gets the window first. The window is drawn at
+   three quarters of a villager's size; `chat_window_scale` in `settings.ini` (50 to 100)
+   changes that.
 
 What is shared: the town itself (trees, flowers, dropped items, holes, buried things),
 every resident's character and house, the weather and the calendar (the host's clock is

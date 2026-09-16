@@ -249,6 +249,15 @@ scrolls to show the tail of a long line and drops its key hint past 40 character
 that opens the line also arrives as typed text, which the line discards -- but only within
 250 ms of opening: the rig posts the opening key without its text, so the discard used to
 eat the first letter of the message instead ("his is a much longer...").
+The window is drawn smaller than a villager's: `mMsg_chat_scale` (from
+`chat_window_scale` in `settings.ini`, 50-100 percent, default 75; set by `mCB_move` with
+the other chat globals and cleared by `mCB_reset`) multiplies the window scale in
+`mMsg_SetMatrix` and the text scale in `mMsg_draw_font`, with the centre moved down by
+(1 - scale) * 48 px in both so the bottom edge stays where a villager's window ends. The
+appear/disappear animations still run from 0 to the chat scale, the name tag is in the
+window's matrix so it follows, and the wrap is unchanged because the text shrinks with
+the window. The key lives in `[Gameplay]`, not `[Network]`: the launcher rewrites the
+whole `[Network]` block and would drop it.
 
 **Animations and inventories audited (2026-09-16, small hours).** Protocol version 5.
 *Playback mode:* many player actions are one-shot animations (`cKF_FRAMECONTROL_STOP`:

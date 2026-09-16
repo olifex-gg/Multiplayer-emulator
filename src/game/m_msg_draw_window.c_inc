@@ -3,6 +3,12 @@ static void mMsg_SetMatrix(mMsg_Window_c* msg_p, GAME* game, int mode) {
   f32 scale = msg_p->window_scale;
   f32 center_x = ( msg_p->center_x - (SCREEN_WIDTH_F * 0.5f)) * 16.0f;
   f32 center_y = (-msg_p->center_y + (SCREEN_HEIGHT_F * 0.5f)) * 16.0f;
+#ifdef TARGET_PC
+  /* Multiplayer chat: a smaller window, its bottom edge where a villager's
+   * is (the model is 96 px tall about its centre, in 1/16 px units). */
+  scale *= mMsg_chat_scale;
+  center_y -= (1.0f - mMsg_chat_scale) * 48.0f * 16.0f;
+#endif
 
   Matrix_push();
   Matrix_translate(center_x, center_y, 0.0f, MTX_MULT);

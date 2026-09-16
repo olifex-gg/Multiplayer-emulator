@@ -20,6 +20,7 @@ PCSettings g_pc_settings = {
     .master_volume = 100,
     .stick_deadzone = 12,
     .cstick_deadzone = 12,
+    .chat_window_scale = 75,
 };
 
 static const char* SETTINGS_FILE = "settings.ini";
@@ -61,6 +62,9 @@ static const char* DEFAULT_SETTINGS =
     "\n"
     "# NES emulator aspect ratio: 0 = stretch to fullscreen, 1 = 4:3 pillarbox\n"
     "nes_aspect = 1\n"
+    "\n"
+    "# Size of the multiplayer chat speech window as a percentage of a villager's (50-100)\n"
+    "chat_window_scale = 75\n"
     "\n"
     "[Audio]\n"
     "# Master output volume as a percentage (0-100)\n"
@@ -128,6 +132,8 @@ static void apply_setting(const char* key, const char* value) {
         if (val >= 0 && val <= 40) g_pc_settings.stick_deadzone = val;
     } else if (strcmp(key, "cstick_deadzone") == 0) {
         if (val >= 0 && val <= 40) g_pc_settings.cstick_deadzone = val;
+    } else if (strcmp(key, "chat_window_scale") == 0) {
+        if (val >= 50 && val <= 100) g_pc_settings.chat_window_scale = val;
     }
 }
 
@@ -207,6 +213,9 @@ void pc_settings_save(void) {
     fprintf(f, "\n");
     fprintf(f, "# NES emulator aspect ratio: 0 = stretch to fullscreen, 1 = 4:3 pillarbox\n");
     fprintf(f, "nes_aspect = %d\n", g_pc_settings.nes_aspect);
+    fprintf(f, "\n");
+    fprintf(f, "# Size of the multiplayer chat speech window as a percentage of a villager's (50-100)\n");
+    fprintf(f, "chat_window_scale = %d\n", g_pc_settings.chat_window_scale);
     fprintf(f, "\n");
     fprintf(f, "[Audio]\n");
     fprintf(f, "# Master output volume as a percentage (0-100)\n");

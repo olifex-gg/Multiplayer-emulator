@@ -286,6 +286,9 @@ extern u8  mMsg_chat_name[16];
 extern int mMsg_chat_name_len;
 extern f32 mMsg_chat_body_scale_y;
 extern f32 mMsg_chat_name_shift;
+/* The whole chat window (body, tag and text) drawn this much smaller than a
+ * villager's, anchored on the same bottom edge; 1 for a villager's window. */
+extern f32 mMsg_chat_scale;
 #endif
 extern int mMsg_Check_request_priority(mMsg_Window_c* msg_p, int request_priority);
 extern int mMsg_Check_main_index(mMsg_Window_c* msg_p, int main_index);

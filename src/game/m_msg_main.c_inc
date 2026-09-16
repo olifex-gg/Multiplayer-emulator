@@ -329,6 +329,7 @@ u8  mMsg_chat_name[16];
 int mMsg_chat_name_len;
 f32 mMsg_chat_body_scale_y = 1.0f;
 f32 mMsg_chat_name_shift = 0.0f;
+f32 mMsg_chat_scale = 1.0f;
 #endif
 
 static int mMsg_LoadMsgData(mMsg_Data_c* msg_data, int index, int cut) {

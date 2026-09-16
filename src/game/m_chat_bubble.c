@@ -23,6 +23,7 @@
 #include "m_private.h"
 #include "pc_net.h"
 #include "pc_log.h"
+#include "pc_settings.h"
 #include "dolphin/os.h"
 #include <string.h>
 
@@ -125,6 +126,7 @@ static void mCB_reset(mMsg_Window_c* msg_p) {
     mMsg_chat_text_len = 0;
     mMsg_chat_body_scale_y = 1.0f;
     mMsg_chat_name_shift = 0.0f;
+    mMsg_chat_scale = 1.0f;
     msg_p->text_lines = mMsg_MAX_LINE;
     mMsg_Unset_LockContinue(msg_p);
     S_showing = 0;
@@ -234,6 +236,14 @@ extern void mCB_move(GAME_PLAY* play) {
     mMsg_chat_body_scale_y = height / 96.0f;
     mMsg_chat_name_shift = (96.0f - height) * 0.5f;
     msg_p->text_lines = lines;
+    /* And the whole thing smaller than a villager's window, as set in
+     * settings.ini (chat_window_scale, 50-100 percent). */
+    {
+        int pct = g_pc_settings.chat_window_scale;
+        if (pct < 50) pct = 50;
+        if (pct > 100) pct = 100;
+        mMsg_chat_scale = (f32)pct / 100.0f;
+    }
 
     /* The tag colours the game gives a boy or a girl. */
     priv = Save_GetPointer(private_data[m.slot]);
