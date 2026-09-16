@@ -145,6 +145,13 @@ static int describe(const ENetPacket* pkt, const char* save_town_to) {
         printf("SLOT slot=%u reason=%u\n", r.slot, r.reason);
         break;
     }
+    case ACNET_MSG_WEATHER: {
+        acnet_weather_t w;
+        if (payload_len != sizeof(w)) return 0;
+        memcpy(&w, payload, sizeof(w));
+        printf("WEATHER type=%d intensity=%d\n", w.type, w.intensity);
+        break;
+    }
     case ACNET_MSG_CHAT: {
         acnet_chat_t m;
         if (payload_len != sizeof(m)) return 0;
@@ -256,7 +263,10 @@ static void usage(void) {
             "       acnet_cli --server HOST --invite CODE --status   (lobby query, no login)\n"
             "       ... --state X,Y,Z      send one player-state packet after login\n"
             "       ... --anim N           animation index to put in it (default: standing still)\n"
+            "       ... --area N           scene id to put in it (default: the outdoor town)\n"
             "       ... --claim N          say our character is in save block N; prints the slot we end up in\n"
+            "       ... --weather T,I      send the town weather (type, intensity); with --wait, once a second\n"
+            "       ... --vanish           exit without saying goodbye (a crashed game), after everything else\n"
             "       ... --state-every MS   with --state and --wait: keep resending it every MS,\n"
             "                              so a running game keeps drawing this fake resident\n"
             "       ... --land FX,FZ,UTX,UTZ,ITEM   send one changed land cell after login\n");
@@ -274,7 +284,11 @@ int main(int argc, char** argv) {
     int port = ACNET_DEFAULT_PORT, slot = ACNET_SLOT_ANY, wait_secs = 0, do_ping = 0, do_status = 0;
     int state_every_ms = 0;
     int anim_idx = ACNET_PLAYER_ANIM_WAIT;
+    int area = ACNET_AREA_FIELD;
     int claim = -1;
+    const char* weather = NULL;
+    acnet_weather_t wx;
+    int vanish = 0;
     acnet_player_state_t ps;
     uint8_t reason = ACNET_UPLOAD_SAVE;
     ENetHost* host;
@@ -297,7 +311,10 @@ int main(int argc, char** argv) {
         else if (strcmp(a, "--state") == 0 && v) { state = v; i++; }
         else if (strcmp(a, "--state-every") == 0 && v) { state_every_ms = atoi(v); i++; }
         else if (strcmp(a, "--anim") == 0 && v) { anim_idx = atoi(v); i++; }
+        else if (strcmp(a, "--area") == 0 && v) { area = atoi(v); i++; }
         else if (strcmp(a, "--claim") == 0 && v) { claim = atoi(v); i++; }
+        else if (strcmp(a, "--weather") == 0 && v) { weather = v; i++; }
+        else if (strcmp(a, "--vanish") == 0) { vanish = 1; }
         else if (strcmp(a, "--land") == 0 && v) { land = v; i++; }
         else if (strcmp(a, "--wait") == 0 && v) { wait_secs = atoi(v); i++; }
         else if (strcmp(a, "--ping") == 0) { do_ping = 1; }
@@ -364,12 +381,22 @@ int main(int argc, char** argv) {
         rc = wait_for(host, peer, ACNET_MSG_SLOT, 5000, NULL);
         if (rc <= 0) { exit_code = 3; goto done; }
     }
+    memset(&wx, 0, sizeof(wx));
+    if (weather) {
+        int t = 0, in = 0;
+        sscanf(weather, "%d,%d", &t, &in);
+        wx.type = (int16_t)t;
+        wx.intensity = (int16_t)in;
+        send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &wx, sizeof(wx), NULL, 0, 1);
+        enet_host_flush(host);
+    }
     memset(&ps, 0, sizeof(ps));
     if (state) {
         sscanf(state, "%f,%f,%f", &ps.x, &ps.y, &ps.z);
         ps.seq = 1;
         /* Frame 1 of the animation at speed 0: a clean held pose, since this
          * fake resident never advances it. */
+        ps.area = (uint32_t)area;
         ps.anim0_idx = (int16_t)anim_idx;
         ps.anim1_idx = (int16_t)anim_idx;
         ps.part_table_idx = 0;
@@ -429,9 +456,19 @@ int main(int argc, char** argv) {
     if (wait_secs > 0) {
         uint32_t end = enet_time_get() + (uint32_t)wait_secs * 1000u;
         uint32_t next_state = enet_time_get();
+        uint32_t next_weather = enet_time_get() + 1000u;
         while ((int32_t)(end - enet_time_get()) > 0) {
             uint32_t now = enet_time_get();
             uint32_t slice = end - now;
+            /* Repeat the weather once a second so a listener who logs in
+             * after us still gets it (only the authority's copy is relayed). */
+            if (weather) {
+                if ((int32_t)(next_weather - now) <= 0) {
+                    send_msg(peer, ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &wx, sizeof(wx), NULL, 0, 1);
+                    next_weather = now + 1000u;
+                }
+                if (next_weather - now < slice) slice = next_weather - now;
+            }
             /* A game forgets a resident whose state is older than a few
              * seconds, so a fake resident has to keep talking to stay drawn. */
             if (state && state_every_ms > 0) {
@@ -448,6 +485,11 @@ int main(int argc, char** argv) {
     }
 
 done:
+    if (vanish) {
+        printf("VANISHED\n");
+        fflush(stdout);
+        return exit_code; /* no disconnect: the socket just goes quiet, like a crash */
+    }
     /* Disconnect only once everything we sent has been acknowledged. A plain
      * enet_peer_disconnect right after a send can put the packet and the
      * DISCONNECT in front of the server in the same service pass, and ENet

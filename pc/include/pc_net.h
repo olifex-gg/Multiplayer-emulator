@@ -86,6 +86,20 @@ int  pc_net_take_land_cells(acnet_land_cell_t* out, int max);
 int pc_net_take_resident_update(int slot, void* private_out, size_t private_len, void* home_out,
                                 size_t home_len);
 
+/* ----- Step 3: shared weather ------------------------------------------- *
+ * 1 when this client is the world authority (the oldest connected game). */
+int pc_net_is_authority(void);
+/* 1 when the local game must NOT run the world's own clockwork itself --
+ * rolling weather, the daily land renewal -- because it is connected and
+ * another game (the authority) does it and sends the results. */
+int pc_net_world_is_remote(void);
+#define pc_net_weather_is_remote pc_net_world_is_remote
+/* The authority reports its weather (and its land-renewal timestamp, raw
+ * bytes) every frame; this sends them when something changed or every few
+ * seconds. Others take what arrived, once per message. */
+void pc_net_send_weather(int type, int intensity, const void* grow_renew_time, size_t grow_renew_size);
+int  pc_net_take_weather(int* type, int* intensity, void* grow_renew_time_out, size_t grow_renew_size);
+
 /* ----- Step 4: chat and clock ------------------------------------------- */
 void pc_net_send_chat(const char* text);
 /* Returns 1 and fills out_slot/out_text if a chat line is waiting, else 0. */

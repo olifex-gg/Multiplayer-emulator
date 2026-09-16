@@ -175,7 +175,7 @@ SAPID=$!
 sleep 0.7
 cli --name bob --state 1,2,3 --anim 5 --wait 1
 wait "$SAPID" || true
-grep -q "STATE .* pos=1.0,2.0,3.0 anim=5/5 part=0 frame=1.0/1.0 speed=0.00 flags=0" "$TMP/alice_state.txt" || fail "alice got no usable state: $(cat "$TMP/alice_state.txt")"
+grep -q "STATE .* area=7 pos=1.0,2.0,3.0 anim=5/5 part=0 frame=1.0/1.0 speed=0.00 flags=0" "$TMP/alice_state.txt" || fail "alice got no usable state: $(cat "$TMP/alice_state.txt")"
 
 echo "17. a resident's slot follows the save block their character lives in"
 # bob is resident 1; carol holds 2 but has never saved, so bob's claim swaps them.
@@ -196,5 +196,46 @@ grep -q "SLOT slot=2 reason=2" <<<"$out" || fail "a saved character's block must
 # The next login keeps the corrected slot, and bob's uploads now protect block 2.
 out=$(cli --name bob); grep -q "slot=2" <<<"$out" || fail "bob's slot did not persist: $out"
 $MK check "$TMP/data/towns/$INVITE/town.gci" | grep -q "^OK" || fail "town broken after slot move"
+
+echo "18. the world authority's weather reaches the others; anyone else's is dropped"
+cli --name alice --weather 1,2 --wait 3 > "$TMP/alice_wx.txt" &   # alone, so alice is the authority
+WXPID=$!
+sleep 0.7
+out=$(cli --name bob --wait 2)
+grep -q "WEATHER type=1 intensity=2" <<<"$out" || fail "bob did not get the authority's weather: $out"
+wait "$WXPID" || true
+cli --name alice --wait 3 > "$TMP/alice_wx2.txt" &
+WXPID=$!
+sleep 0.7
+cli --name bob --weather 3,1 --wait 1 > /dev/null
+wait "$WXPID" || true
+! grep -q "WEATHER" "$TMP/alice_wx2.txt" || fail "a non-authority's weather was relayed: $(cat "$TMP/alice_wx2.txt")"
+
+echo "19. a runtime placeholder is never stored as land, nor passed on"
+cli --name alice --wait 3 > "$TMP/alice_rt.txt" &
+RTPID=$!
+sleep 0.7
+cli --name bob --land 2,3,4,5,61717 --wait 1 > /dev/null     # 0xF115 = DUMMY_DUMP
+wait "$RTPID" || true
+! grep -q "LAND" "$TMP/alice_rt.txt" || fail "a placeholder cell was relayed: $(cat "$TMP/alice_rt.txt")"
+sleep 6
+python3 - "$TMP/data/towns/$INVITE/town.gci" <<'PYEOF' || fail "placeholder cell reached the stored town"
+import sys
+FG_ABS = 64 + 0x26000 + 0x137A8
+idx = ((3 * 5 + 2) * 16 + 5) * 16 + 4
+b = open(sys.argv[1], 'rb').read()
+v = (b[FG_ABS + idx * 2] << 8) | b[FG_ABS + idx * 2 + 1]
+print("stored cell =", v)
+sys.exit(0 if v == 4660 else 1)
+PYEOF
+
+echo "20. a resident whose game died silently can log in again once it has gone quiet"
+out=$(cli --name bob --vanish)
+grep -q "VANISHED" <<<"$out" || fail "vanish: $out"
+out=$(cli --name bob || true)
+grep -q "REJECT reason=4" <<<"$out" || fail "a fresh silent session must still count as connected: $out"
+sleep 6
+out=$(cli --name bob)
+grep -q "WELCOME client_id=[0-9]* slot=2" <<<"$out" || fail "bob could not replace his stale session: $out"
 
 echo "ALL PASSED"

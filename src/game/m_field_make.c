@@ -1,4 +1,7 @@
 #include "m_field_make.h"
+#ifdef TARGET_PC
+#include "pc_net.h" /* multiplayer fork: pc_net_world_is_remote */
+#endif
 
 #include "m_island.h"
 #include "m_name_table.h"
@@ -1237,6 +1240,14 @@ extern void mFM_FieldInit(GAME_PLAY* play) {
 
     mFM_PoorTreeUnderPlayerBlock();
     mAGrw_ChangeCedar2Tree();
+#ifdef TARGET_PC
+    /* Multiplayer fork: the daily land renewal (weeds, fruit, fossils, the
+     * dump, the shine spot) runs on the world authority's game only; its
+     * results reach this game through the land relay, and its renewal
+     * timestamp through the weather message. Two games renewing the same
+     * town would grow everything twice. */
+    if (!pc_net_world_is_remote())
+#endif
     mAGrw_RenewalFgItem(Common_GetPointer(time.rtc_time));
     mAGrw_SetXmasTree();
     mFM_SetFruit_title_demo(Save_Get(scene_no));

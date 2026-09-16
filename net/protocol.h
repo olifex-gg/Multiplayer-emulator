@@ -92,7 +92,8 @@ enum acnet_msg {
     ACNET_MSG_RESIDENT_DATA  = 18,/* S->C  acnet_resident_data_t + ACNET_RESIDENT_BLOB_SIZE bytes */
     ACNET_MSG_LAND_CELLS     = 19,/* C->S->C acnet_land_hdr_t + count * acnet_land_cell_t */
     ACNET_MSG_CLAIM_SLOT     = 20,/* C->S  acnet_claim_slot_t: "my character is in save block N" */
-    ACNET_MSG_SLOT           = 21 /* S->C  acnet_slot_t: your slot is now N */
+    ACNET_MSG_SLOT           = 21,/* S->C  acnet_slot_t: your slot is now N */
+    ACNET_MSG_WEATHER        = 22 /* C->S->C acnet_weather_t; relayed only from the world authority */
 };
 
 enum acnet_reject_reason {
@@ -210,6 +211,22 @@ typedef struct ACNET_PACKED {
     uint8_t reserved[2];
 } acnet_slot_t;
 
+/* The town's weather. Every game rolls its own weather when the clock says
+ * so, so two residents would see different skies; instead the world
+ * authority's game is the one that rolls, it sends what it has whenever it
+ * changes (and every few seconds regardless), the server relays it only when
+ * it really came from the authority, and the other games switch to it. */
+#define ACNET_GROW_TIME_SIZE 16
+typedef struct ACNET_PACKED {
+    int16_t type;         /* mEnv_WEATHER_* (0..15) */
+    int16_t intensity;    /* mEnv_WEATHER_INTENSITY_* (0..15) */
+    /* The authority's Save_t.all_grow_renew_time (an lbRTC_time_c, copied
+     * raw; both ends are the same build), so that a game that skipped the
+     * daily land renewal because the authority did it does not run it again
+     * later if it becomes the authority itself. */
+    uint8_t grow_renew_time[ACNET_GROW_TIME_SIZE];
+} acnet_weather_t;
+
 typedef struct ACNET_PACKED {
     uint32_t nonce;
 } acnet_ping_t;
@@ -267,6 +284,19 @@ typedef struct ACNET_PACKED {
  * carried little-endian like every other field and stored big-endian in the
  * blob. Ordered and reliable, so the last writer wins consistently. */
 #define ACNET_LAND_MAX_CELLS 48
+/* Field cells in this band are the game's RUNTIME placeholders (DUMMY_START
+ * .. below RSV_SHOP_PAPER in m_name_table.h): while the town is loaded the
+ * game swaps structure cells -- houses, the dump, the shrine, mailboxes -- for
+ * these and puts the real ids back when it saves. 0xFFFF is used the same way
+ * for the cells a structure covers (and is also a permanent "nothing here"
+ * value that never changes). None of it is land. A client must not relay them
+ * and the server must not store them: doing so once wiped the dump marker out
+ * of a town, after which the game crashed on entering it. The reserved ids
+ * from 0xFE00 (bridges, RSV_*) are real, permanent cells and are left alone. */
+#define ACNET_LAND_RUNTIME_START 0xF000
+#define ACNET_LAND_RUNTIME_END   0xFE00
+#define ACNET_LAND_ITEM_IS_RUNTIME(v) \
+    (((unsigned)(v) >= ACNET_LAND_RUNTIME_START && (unsigned)(v) < ACNET_LAND_RUNTIME_END) || (unsigned)(v) == 0xFFFFu)
 typedef struct ACNET_PACKED {
     uint8_t count;        /* 1..ACNET_LAND_MAX_CELLS cells follow */
     uint8_t reserved[3];
@@ -311,6 +341,10 @@ typedef struct ACNET_PACKED {
 /* The player's standing-still animation (mPlayer_ANIM_WAIT1), for tools that
  * have no game headers. m_puppet.c_inc checks the value at compile time. */
 #define ACNET_PLAYER_ANIM_WAIT 0
+
+/* acnet_player_state_t.area is the game's scene id; this is the outdoor town
+ * (SCENE_FG), again for tools without the headers and checked at compile time. */
+#define ACNET_AREA_FIELD 7
 
 #define ACNET_MAX_PAYLOAD (sizeof(acnet_hdr_t) + sizeof(acnet_welcome_t))
 

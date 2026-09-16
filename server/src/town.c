@@ -284,6 +284,7 @@ int town_move_resident(town_t* t, const char* name, int from, int to, char* disp
 int town_set_land_cell(town_t* t, int fx, int fz, int utx, int utz, uint16_t item) {
     uint8_t* cell;
     if (!t->data) return 0;
+    if (ACNET_LAND_ITEM_IS_RUNTIME(item)) return 0; /* a placeholder, never land; see protocol.h */
     if (fx < 0 || fx >= ACNET_FG_BLOCK_X || fz < 0 || fz >= ACNET_FG_BLOCK_Z) return 0;
     if (utx < 0 || utx >= ACNET_FG_UT || utz < 0 || utz >= ACNET_FG_UT) return 0;
     cell = t->data + ACNET_FG_CELL_ABS(fx, fz, utx, utz);

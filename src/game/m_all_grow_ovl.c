@@ -2585,6 +2585,14 @@ static int mAGrw_CheckClearDumpDay(lbRTC_time_c* grow_time, lbRTC_time_c* now_ti
 }
 
 extern void mAGrw_SearchDump(mFI_unit_c* dump_info) {
+#ifdef TARGET_PC
+    /* PC port: unit_x/unit_z were left uninitialised when the dump marker
+     * was not in its block, and mAGrw_SetItemDump then indexed with stack
+     * garbage. That cannot happen on a healthy save, but a damaged one
+     * should not take the game down with it. */
+    dump_info->unit_x = 0;
+    dump_info->unit_z = 0;
+#endif
     if (mFI_BlockKind2BkNum(&dump_info->block_x, &dump_info->block_z, mRF_BLOCKKIND_DUMP)) {
         mActor_name_t* fg = mFI_BkNumtoUtFGTop(dump_info->block_x, dump_info->block_z);
         dump_info->block_data = fg;
@@ -2602,6 +2610,12 @@ extern void mAGrw_SearchDump(mFI_unit_c* dump_info) {
 
                 fg++;
             }
+#ifdef TARGET_PC
+            if (i == UT_TOTAL_NUM) {
+                OSReport("[world] the dump block has no dump marker; skipping dump upkeep\n");
+                dump_info->block_data = NULL;
+            }
+#endif
         }
     } else {
         dump_info->block_x = -1;

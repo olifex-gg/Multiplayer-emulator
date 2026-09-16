@@ -134,3 +134,14 @@ These each cost a debugging cycle. Do not regress them.
    this machine a heredoc turned `'\0'` into a literal NUL byte inside a C source file
    (the compiler accepted it, silently). The repo mixes CRLF and LF files, so the script
    must preserve each file's line endings.
+9. **The live field table is not the land.** While a town is loaded the game swaps
+   structure cells (houses, the dump, the shrine, mailboxes) for runtime placeholders
+   (`DUMMY_START` 0xF000 up to the reserved ids at 0xFE00, plus 0xFFFF) and restores the
+   real ids when it saves. The land relay must never send or apply them and the server must
+   never store them (`ACNET_LAND_ITEM_IS_RUNTIME`).
+   Relaying them once wiped the dump marker out of a stored town, and the next game to load
+   it crashed inside `mAGrw_SetItemDump` on an uninitialised position.
+10. **Only the world authority runs the town's clockwork.** The oldest connected game rolls
+    the weather and runs the daily land renewal; it sends its weather and its
+    `all_grow_renew_time` to the others. Any second game doing either on its own gives two
+    residents two different towns (and grows everything twice).

@@ -243,8 +243,23 @@ Step 0 is done and step 1 is in place end to end, built and tested here:
   them rather than like the local player. Still to do: collision (villagers walk through
   it), held items, and the head-turn/footprint callbacks the real player has.
 
-What is **not** there yet: puppet collision and held items, chat (counted but not
-rendered), the shared clock, and the acre-ownership part of convergence (step 3).
+- **Live world, first slice (step 3).** Puppets are solid: they carry the player's 20 x 60
+  collision pipe in their own collision group as an immovable body, villagers are shoved
+  by it like they are by the player, and the local player takes the collision system's
+  push when the thing it bumped was a puppet (the original game never pushes the player,
+  only villagers). A resident is only drawn to those in the same scene (`area` = scene
+  id), so someone indoors does not appear at room coordinates in the field. The world
+  authority alone rolls the weather and runs the daily land renewal; it sends its
+  weather and renewal timestamp (`ACNET_MSG_WEATHER`, relayed only from the authority)
+  and the others switch to it. The land relay ignores the game's runtime placeholders
+  (`DUMMY_START`..0xFE00 and 0xFFFF) both ways and the server refuses to store them. A resident whose
+  game died silently can log in again after 5 s of silence instead of waiting out ENet's
+  timeout.
+
+What is **not** there yet: villagers in the same places for everyone (each game still
+runs its own villager AI; acre ownership is next), held items on puppets, chat (counted
+but not rendered), and a house index in `area` (two residents inside different houses of
+the same size still count as the same place).
 
 ### Not doing (and why)
 

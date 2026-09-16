@@ -46,6 +46,12 @@ static ENetPeer*    s_peer;
 static int          s_active;          /* logged in and town in place */
 static int          s_slot = -1;
 static int          s_claimed_no = -1;  /* the save block we last told the server about */
+/* Weather: what the authority last sent, and what arrived for a non-authority. */
+static int      s_weather_sent_type = -1, s_weather_sent_intensity = -1;
+static uint8_t  s_weather_sent_grow[ACNET_GROW_TIME_SIZE];
+static uint32_t s_weather_sent_ms;
+static int      s_weather_in_pending, s_weather_in_type, s_weather_in_intensity;
+static uint8_t  s_weather_in_grow[ACNET_GROW_TIME_SIZE];
 static int          s_authority_id = -1;
 static int          s_self_id = -1;
 static int64_t      s_clock_skew_ms;   /* server_ms - local_ms at login */
@@ -358,6 +364,16 @@ static int handle_control(const acnet_hdr_t* hdr, const uint8_t* payload, size_t
         }
         return ACNET_MSG_RESIDENT_DATA;
     }
+    case ACNET_MSG_WEATHER: {
+        acnet_weather_t w;
+        if (payload_len != sizeof(w)) return -1;
+        memcpy(&w, payload, sizeof(w));
+        s_weather_in_type = w.type;
+        s_weather_in_intensity = w.intensity;
+        memcpy(s_weather_in_grow, w.grow_renew_time, sizeof(s_weather_in_grow));
+        s_weather_in_pending = 1;
+        return ACNET_MSG_WEATHER;
+    }
     case ACNET_MSG_SLOT: {
         acnet_slot_t r;
         if (payload_len != sizeof(r)) return -1;
@@ -614,6 +630,42 @@ void pc_net_send_player_state(const acnet_player_state_t* state) {
 }
 
 int pc_net_local_slot(void) { return s_active ? s_slot : -1; }
+
+/* ----- weather ----- */
+
+int pc_net_is_authority(void) { return s_active && s_authority_id == s_self_id; }
+
+int pc_net_world_is_remote(void) { return s_active && s_authority_id != s_self_id; }
+
+void pc_net_send_weather(int type, int intensity, const void* grow_renew_time, size_t grow_renew_size) {
+    acnet_weather_t w;
+    uint32_t now;
+    if (!pc_net_is_authority()) return;
+    if (grow_renew_size > ACNET_GROW_TIME_SIZE) grow_renew_size = ACNET_GROW_TIME_SIZE;
+    memset(&w, 0, sizeof(w));
+    memcpy(w.grow_renew_time, grow_renew_time, grow_renew_size);
+    now = enet_time_get();
+    if (type == s_weather_sent_type && intensity == s_weather_sent_intensity &&
+        memcmp(w.grow_renew_time, s_weather_sent_grow, sizeof(w.grow_renew_time)) == 0 &&
+        now - s_weather_sent_ms < 5000) return;
+    s_weather_sent_type = type;
+    s_weather_sent_intensity = intensity;
+    memcpy(s_weather_sent_grow, w.grow_renew_time, sizeof(s_weather_sent_grow));
+    s_weather_sent_ms = now;
+    w.type = (int16_t)type;
+    w.intensity = (int16_t)intensity;
+    send_msg(ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &w, sizeof(w), NULL, 0, 1);
+}
+
+int pc_net_take_weather(int* type, int* intensity, void* grow_renew_time_out, size_t grow_renew_size) {
+    if (!s_active || !s_weather_in_pending) return 0;
+    s_weather_in_pending = 0;
+    *type = s_weather_in_type;
+    *intensity = s_weather_in_intensity;
+    if (grow_renew_size > ACNET_GROW_TIME_SIZE) grow_renew_size = ACNET_GROW_TIME_SIZE;
+    memcpy(grow_renew_time_out, s_weather_in_grow, grow_renew_size);
+    return 1;
+}
 
 int pc_net_puppets_enabled(void) { return s_active && s_cfg.puppets; }
 

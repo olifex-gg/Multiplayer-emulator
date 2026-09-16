@@ -34,6 +34,7 @@ public static class GK {
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wParam, IntPtr lParam);
   public static void Post(IntPtr h, int vk, int scan, bool extended, bool up) {
     long l = 1 | ((long)scan << 16) | (extended ? (1L << 24) : 0);
@@ -50,6 +51,9 @@ public static class GK {
 }
 '@
 if (-not ("GK" -as [type])) { Add-Type -TypeDefinition $sig }
+# Work in physical pixels: on a scaled display, window rects and screenshots
+# otherwise disagree about where the window is.
+[GK]::SetProcessDPIAware() | Out-Null
 $scan = @{ Space=0x39; Return=0x1C; LShift=0x2A; X=0x2D; Y=0x15; Z=0x2C; Q=0x10; E=0x12; W=0x11; A=0x1E; S=0x1F; D=0x20;
            I=0x17; J=0x24; K=0x25; L=0x26; Escape=0x01; Up=0x48; Down=0x50; Left=0x4B; Right=0x4D }
 $ext = @{ Up=$true; Down=$true; Left=$true; Right=$true }
@@ -62,7 +66,12 @@ function PTap([string]$k, [int]$hold, [int]$n, [int]$gap) {
     [GK]::Post($p.MainWindowHandle, $vk[$k], $scan[$k], [bool]$ext[$k], $true);  Start-Sleep -Milliseconds $gap
   }
 }
-function Get-Game { Get-Process -Name AnimalCrossing -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
+# With several games running (two residents on one PC), set $env:GAMEKEYS_PID to pick one.
+function Get-Game {
+  $all = Get-Process -Name AnimalCrossing -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }
+  if ($env:GAMEKEYS_PID) { return $all | Where-Object { $_.Id -eq [int]$env:GAMEKEYS_PID } | Select-Object -First 1 }
+  return $all | Select-Object -First 1
+}
 function Focus-Game {
   $p = Get-Game; if (-not $p) { throw "game window not found" }
   $h = $p.MainWindowHandle
@@ -89,6 +98,8 @@ switch ($cmd) {
   'tap'   { Focus-Game | Out-Null; $h = if ($a2) { [int]$a2 } else { 80 }; $n = if ($a3) { [int]$a3 } else { 1 }; $g = if ($a4) { [int]$a4 } else { 250 }; Tap $a1 $h $n $g; "tapped $a1 x$n" }
   'ptap'  { $h = if ($a2) { [int]$a2 } else { 80 }; $n = if ($a3) { [int]$a3 } else { 1 }; $g = if ($a4) { [int]$a4 } else { 250 }; PTap $a1 $h $n $g; "posted $a1 x$n" }
   'phold' { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $false); Start-Sleep -Milliseconds ([int]$a2); [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $true); "posted hold $a1 for $a2 ms" }
+  'pdown' { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $false); "posted $a1 down" }
+  'pup'   { $p = Get-Game; [GK]::Post($p.MainWindowHandle, $vk[$a1], $scan[$a1], [bool]$ext[$a1], $true); "posted $a1 up" }
   'hold'  { Focus-Game | Out-Null; [GK]::Key($scan[$a1], [bool]$ext[$a1], $false); Start-Sleep -Milliseconds ([int]$a2); [GK]::Key($scan[$a1], [bool]$ext[$a1], $true); "held $a1 for $a2 ms" }
   'shot'  {
     $p = Get-Game; if (-not $p) { throw "game window not found" }

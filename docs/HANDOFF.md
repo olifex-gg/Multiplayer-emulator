@@ -4,14 +4,17 @@ Written at the end of the first long build-and-playtest session and updated sinc
 fresh session can pick up without re-deriving anything. `CLAUDE.md` has the standing
 rules; this file has the situation. `docs/MULTIPLAYER.md` has the design reasoning.
 
-**Last updated 2026-09-15 (evening), the first session on the user's own PC.** Three
-things landed today, all confirmed on the real game here (see "Playtesting without a
-friend"): the puppet no longer crashes the game; it now stands, walks and animates
-exactly as the other resident's game does; and it is dressed as *that* resident (body,
-face, shirt) from their own save block. Along the way a design bug in the resident slots
-was found in the user's real data and fixed (below). The build is in the user's game
-folder; **both players need the new `AnimalCrossing.exe` and `AnimalCrossingOnline.exe`**
-(protocol version 2; old copies are refused by the new server).
+**Last updated 2026-09-15 (night), the first session on the user's own PC.** Landed
+today, all confirmed on the real game here with two copies of it running side by side
+(see "Playtesting without a friend"): the puppet no longer crashes the game; it stands,
+walks and animates exactly as the other resident's game does; it is dressed as *that*
+resident from their own save block; residents' slots follow their save block; puppets are
+solid; residents are only drawn to those in the same scene; the weather and the daily
+land renewal come from the world authority; and the land relay no longer corrupts the
+stored town (a real, crash-causing bug found tonight, below). The build is in the user's
+game folder; **both players need the new `AnimalCrossing.exe` and
+`AnimalCrossingOnline.exe`** (protocol version 2; old copies are refused by the new
+server). Next up: villagers in the same places for everyone.
 
 ## Where things actually stand
 
@@ -38,11 +41,12 @@ Two people on two PCs, in different houses, have played in the same town. That m
   everyone else's *running* game. Shipped to the user, never confirmed, because the crash
   below got in the way.
 - **The land relay** — field-item cells (trees, flowers, dropped items, holes) diffed each
-  frame, relayed, and written into the stored town. Server side is covered by the e2e
-  suite. It is in the user's current build but unconfirmed in play.
+  frame, relayed, and written into the stored town. Seen flowing both ways between two
+  real games on 2026-09-15; the placeholder bug it had (below) is fixed.
 
-**Not started:** chat through the game's text entry, the shared town clock, puppet
-collision and held items, and more than four residents.
+**Not started:** villagers in the same places for everyone (acre ownership), chat through
+the game's text entry, the shared town clock, held items on puppets, and more than four
+residents.
 
 ## The puppet crash: fixed 2026-09-14, awaiting a playtest
 
@@ -126,6 +130,45 @@ puppet keeps its own ~3.6 KB copy, rebuilt when the block changes (live resident
 clears it) and the puppet is rebuilt if the gender changes. Still missing: collision
 (villagers walk through it), held items, hats/accessories drawn by the player's per-joint
 callbacks.
+
+**Live world, first slice (2026-09-15 night).** All in `m_puppet.c_inc` unless noted.
+*Collision:* the puppet constructs the player's `ClObjPipe` (20 x 60) with its own data
+(`Puppet_OcInfoData`, collision group 2 so nothing mistakes it for the player or a
+villager) and registers it every frame in its move proc with weight
+`MASSTYPE_IMMOVABLE`; villagers are pushed by it as they are by the player. The player
+never consumes `status_data.collision_vec` while walking (the engine only ever shoves
+villagers), so `Puppet_net_update_local` applies the previous frame's push to the local
+player when `col_pipe.collision_obj.collided_actor` is a puppet. Verified: a player
+walking into a puppet ends exactly 40 units (two radii) from it and slides around it.
+*Areas:* `acnet_player_state_t.area` is the scene id; puppets are spawned/kept only when
+it matches ours. *Weather + renewal:* the weather actor's roll
+(`aWeather_ChangeWeatherTime0`) returns early when `pc_net_world_is_remote()`; the
+authority sends `Common_Get(weather)`/intensity and `Save.all_grow_renew_time` every
+few seconds (`ACNET_MSG_WEATHER`, server relays only from the authority); others apply it
+through `CLIP(weather_clip)->change_weather_instance` (only in `SCENE_FG` and only once
+that scene's weather actor has constructed -- the clip pointer can dangle across a scene
+change) and copy the renewal time into their save. `m_field_make.c` skips
+`mAGrw_RenewalFgItem` when the world is remote. *No puppets outside the town:* spawning,
+updating, state sending, the claim and the land relay are all gated on `Puppet_in_town`.
+*Stale sessions:* the server replaces a logged-in client that has sent nothing for 5 s
+when the same resident logs in again (e2e check 20; `acnet_cli --vanish` simulates a
+crash). e2e 18 covers the weather relay, 19 the placeholder filter.
+
+**The land relay placeholder bug (found and fixed 2026-09-15).** Alana's copy crashed the
+instant it entered the town: offset inside `mAGrw_RenewalFgItem_ovl` after
+`mPB_force_set_keep_item`, i.e. the inlined `mAGrw_SetItemDump`, reading a garbage
+address. Cause, in two parts. (1) `mAGrw_SearchDump` leaves `unit_x/unit_z`
+uninitialised when the block has no `DUMP` marker (0x583B) and `SetItemDump` then
+indexes with stack garbage -- now guarded under `TARGET_PC`. (2) The marker was missing
+because the land relay had relayed the game's *runtime* field cells: while a town is
+loaded the game swaps structure cells for placeholders `>= DUMMY_START` (0xF000:
+`DUMMY_DUMP` 0xF115, dummy houses, 0xFFFF fills) and restores the real ids on save
+(`restore_fgdata`); the diff saw those swaps as changes, the server wrote them into the
+stored town, and every later download had a town without structures. Diffing the test
+town against the user's real one showed 48 such cells. The user's real server town was
+still clean (the relay never ran in their sessions). Fix: the relay never sends a cell
+holding a placeholder (the snapshot keeps the real value underneath), never overwrites a
+local placeholder cell from the network, and the server refuses to store one; e2e 19.
 
 **The resident-slot bug (found and fixed 2026-09-15).** The server assigned slots by
 login order while the game keeps characters by save-block index, and they had drifted in
@@ -241,6 +284,18 @@ in-game side. The recipe that confirmed the puppet fix:
    form; its data arguments can be Windows paths.
 7. Kill the game, the server and any `acnet_cli` afterwards (`Get-Process` by name; the
    server's command line shows the `--data` path so you never kill the user's own).
+   Killed games leave silent sessions: the server now replaces them after 5 s, but start
+   the next copy after that, or its login is refused and it silently runs single-player.
+9. **Two real games at once:** `D:\Downloads\ACPC-test2` is a second copy whose
+   `settings.ini` says `player_name = Alana`; `gamekeys.ps1` picks a window with
+   `$env:GAMEKEYS_PID`. Put them at `move 0 0 1000 620` and `move 0 660 1000 620`. The
+   player-select host (Egbert, Ursala, Lobo, Deena, Twiggy...) is random and their
+   scripts differ by a line, so near the name menu press **one key at a time with a
+   screenshot between** -- one press too many selects the first entry, which is Owen, and
+   Alana's copy then plays your character. For collision tests use the open stone path
+   by Owen's house with `--state` 60 units away and a one-second walk; long walks drift
+   sideways off terrain (a river bend near Alana's spawn) and never touch the target.
+   `acnet_cli --name Carol --area 9 ...` is a resident indoors; `--area 7` outdoors.
 8. Editing source from this session: write the edit as a Python file with the Write tool
    and run it with `D:/msys64/usr/bin/python3.exe /c/...`. A bash heredoc mangled a
    `'\0'` into a real NUL byte once, and the files mix CRLF and LF.

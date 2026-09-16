@@ -16,6 +16,7 @@
 #include "graph.h"
 #ifdef TARGET_PC
 #include "pc_platform.h"
+#include "pc_net.h" /* multiplayer fork: only the world authority rolls the weather */
 #endif
 
 static void Weather_Actor_ct(ACTOR* actor, GAME* game);
@@ -669,6 +670,12 @@ static void aWeather_ChangeWeatherTime0(ACTOR* actorx) {
 
 #ifdef TARGET_PC
     if (g_pc_weather_override >= 0) {
+        return;
+    }
+    /* Multiplayer fork: another game decides the town's weather and sends
+     * it to us (m_puppet.c_inc applies it); rolling our own would put two
+     * residents under different skies. */
+    if (pc_net_weather_is_remote()) {
         return;
     }
 #endif

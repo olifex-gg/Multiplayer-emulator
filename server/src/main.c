@@ -29,6 +29,11 @@
 #define MAX_TOWNS   16
 #define MAX_INVITES 64
 #define UPLOAD_MIN_INTERVAL_MS 2000
+/* A logged-in client that has sent nothing for this long is treated as gone
+ * when the same resident logs in again: a game that crashed or was killed
+ * never says goodbye, and ENet takes up to half a minute to notice. A live
+ * game sends its state 30 times a second, so this never hits one. */
+#define STALE_SESSION_MS 5000
 
 typedef struct {
     int      in_use;
@@ -39,6 +44,7 @@ typedef struct {
     char     name[ACNET_NAME_LEN + 1];
     uint64_t login_seq;
     uint32_t last_upload_ms;
+    uint32_t last_seen_ms;    /* enet_time of the last packet from this client */
     ENetPeer* peer;
 } client_t;
 
@@ -53,6 +59,7 @@ typedef struct {
 #define LAND_FLUSH_MS 5000
 
 static client_t g_clients[ACNET_MAX_CLIENTS];
+static void client_release(client_t* c);
 static room_t   g_rooms[MAX_TOWNS];
 static char     g_invites[MAX_INVITES][ACNET_INVITE_LEN + 1];
 static int      g_invite_count;
@@ -324,6 +331,15 @@ static void handle_hello(client_t* c, const uint8_t* payload, size_t len) {
     for (i = 0; i < ACNET_MAX_CLIENTS; i++) {
         client_t* o = &g_clients[i];
         if (o->in_use && o->logged_in && o->room == room && strcmp(o->name, name) == 0) {
+            uint32_t now = enet_time_get();
+            if (o->last_seen_ms && now - o->last_seen_ms > STALE_SESSION_MS) {
+                logf_("[%s] %s is back before their silent old session (client %d) timed out; replacing it",
+                      invite, name, o->id);
+                enet_peer_disconnect_now(o->peer, 0); /* no further events for that peer */
+                o->peer->data = NULL;
+                client_release(o);
+                continue;
+            }
             send_reject(c->peer, ACNET_REJECT_NAME_IN_USE, "that resident is already connected");
             return;
         }
@@ -478,17 +494,36 @@ static void handle_land_cells(client_t* c, const uint8_t* payload, size_t len) {
     if (len != sizeof(h) + (size_t)h.count * sizeof(acnet_land_cell_t)) { if (g_verbose) logf_("  bad len for count %u", h.count); return; }
     cells = (const acnet_land_cell_t*)(payload + sizeof(h));
     r = &g_rooms[c->room];
-    for (i = 0; i < h.count; i++) {
-        acnet_land_cell_t cell;
-        memcpy(&cell, &cells[i], sizeof(cell));
-        if (town_set_land_cell(&r->town, cell.fx, cell.fz, cell.utx, cell.utz, cell.item)) applied++;
+    {
+        /* Relay only the cells the town accepted: a runtime placeholder or an
+         * out-of-range cell is dropped rather than passed on to the others. */
+        uint8_t out[sizeof(acnet_land_hdr_t) + ACNET_LAND_MAX_CELLS * sizeof(acnet_land_cell_t)];
+        acnet_land_hdr_t oh;
+        int dropped = 0;
+        for (i = 0; i < h.count; i++) {
+            acnet_land_cell_t cell;
+            memcpy(&cell, &cells[i], sizeof(cell));
+            if (town_set_land_cell(&r->town, cell.fx, cell.fz, cell.utx, cell.utz, cell.item)) {
+                memcpy(out + sizeof(oh) + applied * sizeof(cell), &cell, sizeof(cell));
+                applied++;
+            } else {
+                dropped++;
+            }
+        }
+        if (applied) {
+            memset(&oh, 0, sizeof(oh));
+            oh.count = (uint8_t)applied;
+            memcpy(out, &oh, sizeof(oh));
+            if (!r->land_dirty) {
+                r->land_dirty = 1;
+                r->land_dirty_ms = enet_time_get();
+            }
+            room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_LAND_CELLS, out,
+                           sizeof(oh) + (size_t)applied * sizeof(acnet_land_cell_t), 1);
+        }
+        if (g_verbose) logf_("[%s] %s changed %d land cell(s)%s%d dropped", r->town.invite, c->name, applied,
+                             dropped ? ", " : ", ", dropped);
     }
-    if (applied && !r->land_dirty) {
-        r->land_dirty = 1;
-        r->land_dirty_ms = enet_time_get();
-    }
-    room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_LAND_CELLS, payload, len, 1);
-    if (g_verbose) logf_("[%s] %s changed %u land cell(s)", r->town.invite, c->name, h.count);
 }
 
 /* Write live land edits to disk at most every LAND_FLUSH_MS, or at once
@@ -566,6 +601,19 @@ static void handle_claim_slot(client_t* c, const uint8_t* payload, size_t len) {
     send_msg(c->peer, ACNET_CH_CONTROL, ACNET_MSG_SLOT, &r, sizeof(r), NULL, 0, 1);
 }
 
+/* Weather is relayed only from the world authority, so one game's sky is
+ * the town's sky. Anyone else's is dropped. */
+static void handle_weather(client_t* c, const uint8_t* payload, size_t len) {
+    acnet_weather_t w;
+    if (!c->logged_in || len != sizeof(w)) return;
+    if (g_rooms[c->room].authority_id != c->id) {
+        if (g_verbose) logf_("[%s] ignoring weather from %s (not the authority)", g_rooms[c->room].town.invite, c->name);
+        return;
+    }
+    memcpy(&w, payload, sizeof(w));
+    room_broadcast(c->room, c, ACNET_CH_CONTROL, ACNET_MSG_WEATHER, &w, sizeof(w), 1);
+}
+
 static void handle_ping(client_t* c, const uint8_t* payload, size_t len) {
     acnet_ping_t p;
     acnet_pong_t r;
@@ -628,6 +676,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     acnet_hdr_t hdr;
     const uint8_t* payload;
     size_t payload_len, blob_len;
+    c->last_seen_ms = enet_time_get();
     if (len < sizeof(hdr)) return;
     memcpy(&hdr, data, sizeof(hdr));
     if (hdr.version != ACNET_PROTOCOL_VERSION) {
@@ -650,6 +699,7 @@ static void handle_packet(client_t* c, const uint8_t* data, size_t len) {
     case ACNET_MSG_STATUS_REQUEST: handle_status_request(c, payload, payload_len); break;
     case ACNET_MSG_LAND_CELLS:   handle_land_cells(c, payload, payload_len); break;
     case ACNET_MSG_CLAIM_SLOT:   handle_claim_slot(c, payload, payload_len); break;
+    case ACNET_MSG_WEATHER:      handle_weather(c, payload, payload_len); break;
     default:
         if (g_verbose) logf_("client %d sent unknown message type %u", c->id, hdr.type);
         break;

@@ -30,6 +30,7 @@
 #include "m_needlework.h"
 #include "m_private.h"
 #include "m_scene_table.h"
+#include "ac_weather.h"
 #include <stddef.h>
 
 #define PUPPET_PROFILE_ID mAc_PROFILE_PUPPET
@@ -37,6 +38,11 @@
 
 /* The wire protocol's idea of "standing still" must be the player's own. */
 typedef char puppet_wire_anim_check[(ACNET_PLAYER_ANIM_WAIT == mPlayer_ANIM_WAIT1) ? 1 : -1];
+typedef char puppet_wire_area_check[(ACNET_AREA_FIELD == SCENE_FG) ? 1 : -1];
+/* Runtime field placeholders start where the protocol says they do. */
+typedef char puppet_runtime_start_check[(ACNET_LAND_RUNTIME_START == DUMMY_START) ? 1 : -1];
+typedef char puppet_runtime_end_check[(ACNET_LAND_RUNTIME_END == RSV_SHOP_PAPER) ? 1 : -1];
+typedef char puppet_grow_time_check[(sizeof(lbRTC_time_c) <= ACNET_GROW_TIME_SIZE) ? 1 : -1];
 /* The server tells an empty save block by its PersonalID; keep the offset honest. */
 typedef char puppet_id_offset_check[(offsetof(Private_c, player_ID.player_id) == ACNET_PRIVATE_ID_OFFSET) ? 1 : -1];
 
@@ -56,6 +62,26 @@ static int Puppet_in_town(GAME_PLAY* play) {
             return TRUE;
     }
 }
+
+/* Where a resident is, for deciding whether we can see them: the scene. A
+ * resident indoors must not be drawn at their room coordinates in our field.
+ * (Two residents inside different houses of the same size still share an
+ * area for now; the house index is the next refinement.) */
+static u32 Puppet_area(GAME_PLAY* play) {
+    return (u32)play->scene_id;
+}
+
+/* The puppet's body for collisions: the same 20 x 60 pipe as the player, in
+ * collision group 2 so nothing mistakes it for the player (group 1) or a
+ * villager (group 3), and immovable, since its position comes from the
+ * network: the local player and the villagers are the ones pushed aside. */
+// clang-format off
+static ClObjPipeData_c Puppet_OcInfoData = {
+    { 0x39, ClObj_FLAG2_IS_GROUP_2, ClObj_TYPE_PIPE }, /* ClObjData_c */
+    { 0x01 }, /* ClObjElemData_c */
+    { { 20, 60, 0, { 0, 0, 0 } } }, /* ClObjPipeAttrData_c */
+};
+// clang-format on
 
 /* --- Look -------------------------------------------------------------
  * One resident's face, skin and shirt as the player draw code wants them:
@@ -292,6 +318,11 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
     Player_actor_set_eye_pattern(actorx, 0);
     Player_actor_set_mouth_pattern(actorx, 0);
     cKF_SkeletonInfo_R_combine_play(&p->keyframe0, &p->keyframe1, p->part_table);
+
+    /* Solid: registered with the collision system every frame in the move proc. */
+    ClObjPipe_ct(game, &p->col_pipe);
+    ClObjPipe_set5(game, &p->col_pipe, actorx, &Puppet_OcInfoData);
+    actorx->status_data.weight = MASSTYPE_IMMOVABLE;
     OSReport("[puppet] ct: body ready\n");
 
     Shape_Info_init(actorx, 0.0f, &mAc_ActorShadowCircle, 18.0f, 18.0f);
@@ -306,8 +337,11 @@ static void Puppet_actor_ct(ACTOR* actorx, GAME* game) {
 }
 
 static void Puppet_actor_dt(ACTOR* actorx, GAME* game) {
-    (void)actorx;
-    (void)game;
+    PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+
+    if (p->keyframe0.skeleton != NULL) {
+        ClObjPipe_dt(game, &p->col_pipe);
+    }
 }
 
 /* Per-frame: play what the other resident's game is playing. Their animation
@@ -315,14 +349,19 @@ static void Puppet_actor_dt(ACTOR* actorx, GAME* game) {
  * the animation runs on locally at their speed. */
 static void Puppet_actor_move(ACTOR* actorx, GAME* game) {
     PLAYER_ACTOR* p = (PLAYER_ACTOR*)actorx;
+    GAME_PLAY* play = (GAME_PLAY*)game;
     int slot = actorx->actor_specific;
     puppet_anim_t* a = &s_anim[slot];
     acnet_player_state_t st;
-    (void)game;
 
     if (p->keyframe0.skeleton == NULL) {
         return;
     }
+
+    /* Take part in this frame's object collisions, like the player and the
+     * villagers do, so nobody walks through us. */
+    CollisionCheck_Uty_ActorWorldPosSetPipeC(actorx, &p->col_pipe);
+    CollisionCheck_setOC(game, &play->collision_check, &p->col_pipe.collision_obj);
 
     if (pc_net_get_remote_state(slot, &st)) {
         if (st.anim0_idx != a->anim0 || st.anim1_idx != a->anim1 || st.part_table_idx != a->part_table) {
@@ -431,14 +470,28 @@ ACTOR_PROFILE Puppet_Profile = {
  * land, whoever or whatever made it, shows up as a changed cell there. Each
  * frame: apply the cells other residents changed, then diff our table
  * against a snapshot and send what changed. Applied cells go into the
- * snapshot too, so nothing echoes back. */
+ * snapshot too, so nothing echoes back.
+ *
+ * NOT everything in the live table is land. While the town is loaded the
+ * game swaps structure cells (houses, the dump, the shrine, mailboxes...) for
+ * runtime placeholders >= DUMMY_START and restores the real ids at save time
+ * (restore_fgdata in m_actor.c). Those swaps are not changes: a placeholder is
+ * never sent, the snapshot keeps the last real value underneath it, and a
+ * placeholder cell is never overwritten from the network (the actor that
+ * owns it would put its own value back anyway). Relaying placeholders once
+ * wiped the dump marker out of a stored town and crashed the next game to
+ * load it. */
 static u16 s_land_snapshot[ACNET_FG_CELLS];
 static int s_land_snapshot_valid;
 
-static void Puppet_land_sync(void) {
+static void Puppet_land_sync(GAME_PLAY* play) {
     mActor_name_t* live = Save_GetFG();
     acnet_land_cell_t buf[ACNET_LAND_MAX_CELLS];
-    int n, i, applied = 0, pending = 0;
+    int n, i, applied = 0, skipped = 0, pending = 0;
+
+    if (!Puppet_in_town(play)) {
+        return; /* incoming cells wait in pc_net's queue until we are */
+    }
 
     if (!s_land_snapshot_valid) {
         memcpy(s_land_snapshot, live, sizeof(s_land_snapshot));
@@ -453,10 +506,15 @@ static void Puppet_land_sync(void) {
             const acnet_land_cell_t* c = &buf[i];
             int idx;
             if (c->fx >= ACNET_FG_BLOCK_X || c->fz >= ACNET_FG_BLOCK_Z || c->utx >= ACNET_FG_UT ||
-                c->utz >= ACNET_FG_UT) {
+                c->utz >= ACNET_FG_UT || ACNET_LAND_ITEM_IS_RUNTIME(c->item)) {
+                skipped++;
                 continue;
             }
             idx = ACNET_FG_CELL_INDEX(c->fx, c->fz, c->utx, c->utz);
+            if (ACNET_LAND_ITEM_IS_RUNTIME(live[idx])) {
+                skipped++; /* a structure stands here in our game; leave it to its actor */
+                continue;
+            }
             live[idx] = (mActor_name_t)c->item;
             s_land_snapshot[idx] = (u16)c->item;
             applied++;
@@ -468,11 +526,17 @@ static void Puppet_land_sync(void) {
         if (mFI_CheckFieldData()) {
             mFI_SetFGUpData();
         }
-        OSReport("[land] applied %d cell change(s) from other residents\n", applied);
+        OSReport("[land] applied %d cell change(s) from other residents%s\n", applied,
+                 skipped ? " (some placeholders ignored)" : "");
+    } else if (skipped) {
+        OSReport("[land] ignored %d placeholder cell(s) from other residents\n", skipped);
     }
 
     /* 2. Send what changed here. */
     for (i = 0; i < ACNET_FG_CELLS; i++) {
+        if (ACNET_LAND_ITEM_IS_RUNTIME(live[i])) {
+            continue; /* a structure's placeholder, not a change */
+        }
         if (live[i] != (mActor_name_t)s_land_snapshot[i]) {
             acnet_land_cell_t* c = &buf[pending];
             int cell = i % ACNET_FG_UT;
@@ -524,11 +588,28 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         pc_net_set_player_no(Common_Get(player_no));
     }
 
+    /* 0b. Do not walk through other residents. The collision system already
+     *     works out how far we overlap a puppet (its body is immovable, so
+     *     the whole push lands on us), but the player's walking code never
+     *     consumes that push: in the original game villagers get shoved and
+     *     the player never does. So when the thing we bumped last frame was
+     *     a puppet, take the push here, before this frame's step. */
+    if (Puppet_in_town(play) && ClObj_DID_COLLIDE(lp->col_pipe.collision_obj)) {
+        ACTOR* hit = lp->col_pipe.collision_obj.collided_actor;
+        if (hit != NULL && hit->id == PUPPET_PROFILE_ID) {
+            player_actor->world.position.x += player_actor->status_data.collision_vec.x;
+            player_actor->world.position.z += player_actor->status_data.collision_vec.z;
+            player_actor->status_data.collision_vec.x = 0.0f;
+            player_actor->status_data.collision_vec.z = 0.0f;
+        }
+    }
+
     /* 1. Broadcast our own state: where we are, and exactly what our body
      *    is doing, so our puppet in the others' games plays the same thing. */
     if (Puppet_in_town(play)) {
         acnet_player_state_t st;
         memset(&st, 0, sizeof(st));
+        st.area = Puppet_area(play);
         st.x = player_actor->world.position.x;
         st.y = player_actor->world.position.y;
         st.z = player_actor->world.position.z;
@@ -564,10 +645,38 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
     }
 
     /* 1c. Land: apply the others' changes, send ours. */
-    Puppet_land_sync();
+    Puppet_land_sync(play);
 
-    if (!pc_net_puppets_enabled()) {
-        return; /* other residents not drawn; town sync is unaffected */
+    /* 1d. The world's clockwork: the authority's sky is the town's sky, and
+     *     its land-renewal timestamp is everyone's, so nobody renews twice. */
+    if (Puppet_in_town(play)) {
+        if (pc_net_is_authority()) {
+            pc_net_send_weather(Common_Get(weather), Common_Get(weather_intensity),
+                                Save_GetPointer(all_grow_renew_time), sizeof(lbRTC_time_c));
+        } else {
+            int type, intensity;
+            lbRTC_time_c renew;
+            if (pc_net_take_weather(&type, &intensity, &renew, sizeof(renew))) {
+                if (memcmp(&renew, Save_GetPointer(all_grow_renew_time), sizeof(renew)) != 0) {
+                    Save_Set(all_grow_renew_time, renew);
+                }
+                if (type >= 0 && type < 16 && intensity >= 0 && intensity < 16 &&
+                    (type != Common_Get(weather) || intensity != Common_Get(weather_intensity)) &&
+                    play->scene_id == SCENE_FG && CLIP(weather_clip) != NULL && CLIP(weather_clip)->actor != NULL &&
+                    CLIP(weather_clip)->actor->ct_proc == NULL &&
+                    CLIP(weather_clip)->change_weather_instance != NULL) {
+                    OSReport("[world] weather from the host: type %d intensity %d (was %d/%d)\n", type, intensity,
+                             (int)Common_Get(weather), (int)Common_Get(weather_intensity));
+                    CLIP(weather_clip)->change_weather_instance(CLIP(weather_clip)->actor, (s16)type,
+                                                                 (s16)intensity);
+                    Save_Set(weather, (u8)((intensity & 0xF) | ((type & 0xF) << 4)));
+                }
+            }
+        }
+    }
+
+    if (!pc_net_puppets_enabled() || !Puppet_in_town(play)) {
+        return; /* other residents not drawn (or not in town yet); town sync is unaffected */
     }
 
     /* 2. Update existing puppets from network state, deleting those whose
@@ -582,6 +691,10 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
                 int s = a->actor_specific;
                 if (!pc_net_get_remote_state(s, &st)) {
                     OSReport("[puppet] resident %d left; removing puppet\n", s);
+                    Actor_info_delete(&play->actor_info, a, game);
+                } else if (st.area != Puppet_area(play)) {
+                    OSReport("[puppet] resident %d went somewhere else (area %u, we are in %u); removing puppet\n",
+                             s, (unsigned)st.area, (unsigned)Puppet_area(play));
                     Actor_info_delete(&play->actor_info, a, game);
                 } else if (Puppet_slot_has_resident(s) && Puppet_gender(s) != s_anim[s].built_gender) {
                     OSReport("[puppet] resident %d's character changed body; rebuilding puppet\n", s);
@@ -606,6 +719,9 @@ void Puppet_net_update_local(ACTOR* player_actor, GAME* game) {
         }
         if (!pc_net_get_remote_state(slot, &st)) {
             continue;
+        }
+        if (st.area != Puppet_area(play)) {
+            continue; /* indoors while we are out, or the other way round */
         }
         if (Puppet_find(play, slot) != NULL) {
             continue;
